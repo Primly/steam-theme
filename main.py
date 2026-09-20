@@ -25,6 +25,7 @@ import extras
 import palette as palette_mod
 import steamdetect
 import theme as theme_mod
+import upscale
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -78,20 +79,31 @@ def run_pipeline(cfg, game, log, dry_run=False):
         log("  !! no artwork found at all; aborting")
         return None
 
+    # monitors first, so art can be upscaled toward its target display
+    monitors = theme_mod.assign_roles(theme_mod.enumerate_monitors(),
+                                      cfg.get("monitors", []), log)
+    for m in monitors:
+        role = m["role"]
+        if role in art:
+            w, h = m["rect"][2] - m["rect"][0], m["rect"][3] - m["rect"][1]
+            art[role] = upscale.maybe_upscale(art[role], w, h, cfg, log)
+
     # Stage 3 — palette (+ optional VLM naming)
     hero = art.get("hero") or next(iter(art.values()))
-    force_dark = bool(cfg.get("force_dark_mode"))
+    pref = cfg.get("appearance_preference")
+    if pref not in ("dark", "light", "auto"):  # back-compat with force_dark_mode
+        pref = "dark" if cfg.get("force_dark_mode") else "auto"
+    force = None if pref == "auto" else pref
     pal = palette_mod.build_palette(hero, cfg.get("palette_mode", "colorful"),
-                                    force_dark=force_dark)
+                                    force=force)
     ai = palette_mod.ai_theme_naming(cfg, hero, pal, name, log)
     if ai:
         log(f"  [vlm] {ai}")
-        if ai.get("appearance") in ("dark", "light") and not force_dark:
+        if ai.get("appearance") in ("dark", "light") and pref == "auto":
             pal["appearance"] = ai["appearance"]
         if ai.get("palette_mode") in ("material", "muted", "colorful"):
-            pal = palette_mod.build_palette(hero, ai["palette_mode"],
-                                            force_dark=force_dark)
-            if not force_dark:
+            pal = palette_mod.build_palette(hero, ai["palette_mode"], force=force)
+            if pref == "auto":
                 pal["appearance"] = ai.get("appearance", pal["appearance"])
     theme_name = (ai or {}).get("theme_name") or f"{name} — Steam Wallpaper"
     mood = (ai or {}).get("mood", "")
@@ -100,9 +112,7 @@ def run_pipeline(cfg, game, log, dry_run=False):
     log(f"  [pal] {pal['appearance']} mode, accent {pal['accent']} "
         f"({pal['accent_grade']}, {pal['accent_contrast']}:1), theme '{theme_name}'")
 
-    # Stage 4 — monitors + composite + theme
-    monitors = theme_mod.assign_roles(theme_mod.enumerate_monitors(),
-                                      cfg.get("monitors", []), log)
+    # Stage 4 — composite + theme
     wallpaper = theme_mod.compose_wallpaper(monitors, art,
                                             os.path.join(cache, "wallpaper_span.jpg"), log)
     theme_path = theme_mod.write_theme_file(
@@ -176,7 +186,14 @@ def main():
     ap.add_argument("--reapply", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--appid", type=int, default=None)
+    ap.add_argument("--ui", action="store_true", help="open the browser config page")
+    ap.add_argument("--port", type=int, default=8765)
     args = ap.parse_args()
+
+    if args.ui:
+        import webui
+        webui.serve(port=args.port)
+        return
 
     cfg = load_config()
     log = _log_factory(cfg)
@@ -189,9 +206,10 @@ def main():
                    dry_run=args.dry_run)
         return
 
-    interval = cfg.get("poll_interval_seconds", 30)
-    log(f"service started; polling every {interval}s (Ctrl+C to stop)")
+    log("service started (Ctrl+C to stop); config reloads every cycle")
     while True:
+        cfg = load_config()  # live-reload so the web UI applies without restart
+        interval = cfg.get("poll_interval_seconds", 30)
         try:
             check_once(cfg, log)
         except Exception as e:

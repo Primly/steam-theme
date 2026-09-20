@@ -26,19 +26,24 @@ def _friendly_monitor_names():
     """Map PNP model code (e.g. 'SAM7419') -> friendly name (e.g. 'LS49AG95')
     via WMI root\\wmi WmiMonitorID. Returns {} on any failure."""
     try:
+        import pythoncom
         import win32com.client
-        locator = win32com.client.Dispatch("WbemScripting.SWbemLocator")
-        svc = locator.ConnectServer(".", "root\\wmi")
-        out = {}
-        for m in svc.ExecQuery("SELECT InstanceName, UserFriendlyName FROM WmiMonitorID"):
-            try:
-                name = "".join(chr(c) for c in (m.UserFriendlyName or []) if c)
-                parts = (m.InstanceName or "").split("\\")
-                if name and len(parts) >= 2:
-                    out[parts[1].upper()] = name
-            except Exception:
-                pass
-        return out
+        pythoncom.CoInitialize()  # required when called from a worker thread
+        try:
+            locator = win32com.client.Dispatch("WbemScripting.SWbemLocator")
+            svc = locator.ConnectServer(".", "root\\wmi")
+            out = {}
+            for m in svc.ExecQuery("SELECT InstanceName, UserFriendlyName FROM WmiMonitorID"):
+                try:
+                    name = "".join(chr(c) for c in (m.UserFriendlyName or []) if c)
+                    parts = (m.InstanceName or "").split("\\")
+                    if name and len(parts) >= 2:
+                        out[parts[1].upper()] = name
+                except Exception:
+                    pass
+            return out
+        finally:
+            pythoncom.CoUninitialize()
     except Exception:
         return {}
 

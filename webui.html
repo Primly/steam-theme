@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Steam Wallpaper — Settings</title>
+<style>
+  :root {
+    --bg: #101014; --panel: #1a1a22; --panel2: #22222c; --border: #33333f;
+    --text: #e8e8ee; --dim: #9a9aa8; --accent: #66c0f4; --ok: #4caf7d;
+    --err: #e06060; --warn: #d8a038;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 "Segoe UI", system-ui, sans-serif; }
+  header { padding: 18px 28px; border-bottom: 1px solid var(--border);
+           display: flex; align-items: baseline; gap: 14px;
+           position: sticky; top: 0; background: var(--bg); z-index: 5; }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header span { color: var(--dim); font-size: 13px; }
+  main { max-width: 860px; margin: 0 auto; padding: 20px 28px 120px; }
+  section { background: var(--panel); border: 1px solid var(--border);
+            border-radius: 10px; padding: 18px 20px; margin: 16px 0; }
+  h2 { margin: 0 0 4px; font-size: 15px; }
+  .hint { color: var(--dim); font-size: 12.5px; margin: 0 0 14px; }
+  .row { display: flex; gap: 14px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
+  label { min-width: 190px; color: var(--dim); }
+  label.top { align-self: flex-start; padding-top: 6px; }
+  input[type=text], input[type=password], input[type=number], select, textarea {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 7px 10px; font: inherit; flex: 1; min-width: 220px; }
+  input[type=number] { max-width: 120px; flex: none; }
+  textarea { font-family: Consolas, monospace; font-size: 12.5px; min-height: 74px; }
+  input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); }
+  .switch { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .switch input { width: 17px; height: 17px; accent-color: var(--accent); }
+  .switch span { color: var(--text); }
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+           border-radius: 6px; padding: 7px 14px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #0b1520; font-weight: 600; }
+  .result { font-size: 12.5px; padding: 6px 10px; border-radius: 6px; display: none; flex: 1 1 100%; }
+  .result.ok   { display: block; background: #17301f; color: var(--ok); }
+  .result.err  { display: block; background: #331a1a; color: var(--err); }
+  .result.info { display: block; background: #2a2415; color: var(--warn); }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 6px 8px; border-top: 1px solid var(--border); vertical-align: middle; }
+  td:first-child { color: var(--dim); white-space: nowrap; }
+  td input, td select { min-width: 0; width: 100%; }
+  #log { background: #0b0b0e; border: 1px solid var(--border); border-radius: 8px;
+         padding: 12px; font: 12px/1.5 Consolas, monospace; white-space: pre-wrap;
+         max-height: 260px; overflow-y: auto; color: #b8e6b8; }
+  .actions { position: fixed; bottom: 0; left: 0; right: 0; background: #14141bdd;
+             backdrop-filter: blur(8px); border-top: 1px solid var(--border);
+             padding: 12px 28px; display: flex; gap: 12px; align-items: center; }
+  #saveState { color: var(--dim); font-size: 13px; }
+  .sub { margin: 18px 0 6px; font-size: 13px; color: var(--text); font-weight: 600; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Steam Wallpaper</h1><span>configuration</span>
+</header>
+<main>
+
+<section>
+  <h2>General</h2>
+  <p class="hint">Core behavior of the theme pipeline.</p>
+  <div class="row">
+    <label for="appearance">Theme appearance</label>
+    <select id="appearance">
+      <option value="dark">Always dark</option>
+      <option value="light">Always light</option>
+      <option value="auto">Auto (from wallpaper brightness)</option>
+    </select>
+  </div>
+  <div class="row">
+    <label for="paletteMode">Palette style</label>
+    <select id="paletteMode">
+      <option value="colorful">Colorful (boosted saturation)</option>
+      <option value="material">Material (mid saturation)</option>
+      <option value="muted">Muted (desaturated)</option>
+    </select>
+  </div>
+  <div class="row">
+    <label for="poll">Poll interval (seconds)</label>
+    <input id="poll" type="number" min="10" max="3600">
+  </div>
+  <div class="row">
+    <label for="excludes" class="top">Excluded app IDs</label>
+    <input id="excludes" type="text" placeholder="431960, 250820">
+  </div>
+</section>
+
+<section>
+  <h2>Steam</h2>
+  <p class="hint">Free key at <a href="https://steamcommunity.com/dev/apikey" target="_blank">steamcommunity.com/dev/apikey</a>. Works on your own profile even if private.</p>
+  <div class="row">
+    <label for="steamKey">Web API key</label>
+    <input id="steamKey" type="password">
+    <button onclick="togglePw('steamKey')">Show</button>
+  </div>
+  <div class="row">
+    <label for="steamId">SteamID64</label>
+    <input id="steamId" type="text" placeholder="auto-detected if empty">
+    <button onclick="detectSteamId()">Auto-detect</button>
+  </div>
+  <div class="row">
+    <button onclick="runTest('steam', {steam_api_key: v('steamKey'), steam_id64: v('steamId')}, 'steamResult')">Test connection</button>
+    <div class="result" id="steamResult"></div>
+  </div>
+</section>
+
+<section>
+  <h2>Artwork sources</h2>
+  <p class="hint">SteamGridDB gives proper heroes/logos/icons. Free key at <a href="https://www.steamgriddb.com/profile/preferences/api" target="_blank">steamgriddb.com/profile/preferences/api</a>. Steam CDN + wallhaven are keyless fallbacks.</p>
+  <div class="row">
+    <label for="sgdbKey">SteamGridDB key</label>
+    <input id="sgdbKey" type="password">
+    <button onclick="togglePw('sgdbKey')">Show</button>
+    <button onclick="runTest('sgdb', {steamgriddb_api_key: v('sgdbKey')}, 'sgdbResult')">Test</button>
+    <div class="result" id="sgdbResult"></div>
+  </div>
+  <div class="row">
+    <label for="whKey">Wallhaven key (optional)</label>
+    <input id="whKey" type="password">
+    <button onclick="togglePw('whKey')">Show</button>
+  </div>
+</section>
+
+<section>
+  <h2>AI / VLM (OpenAI-compatible)</h2>
+  <p class="hint">Used for theme naming + mood classification (and upscaling, if selected below). Point at a local server (LM Studio, Ollama) or a cloud provider like OpenRouter.</p>
+  <div class="row">
+    <div class="switch"><input type="checkbox" id="aiEnabled"><span>Enable AI features</span></div>
+  </div>
+  <div class="row">
+    <label for="aiPreset">Preset</label>
+    <select id="aiPreset" onchange="applyPreset()">
+      <option value="">Custom</option>
+      <option value="local">LM Studio (localhost:1234)</option>
+      <option value="ollama">Ollama (localhost:11434)</option>
+      <option value="openrouter">OpenRouter (cloud)</option>
+    </select>
+  </div>
+  <div class="row">
+    <label for="aiBase">Base URL</label>
+    <input id="aiBase" type="text" placeholder="http://localhost:1234/v1">
+  </div>
+  <div class="row">
+    <label for="aiKey">API key</label>
+    <input id="aiKey" type="password" placeholder="lm-studio / sk-or-...">
+    <button onclick="togglePw('aiKey')">Show</button>
+  </div>
+  <div class="row">
+    <label for="aiModel">Model</label>
+    <input id="aiModel" type="text" list="modelList" placeholder="glm-4.5-air">
+    <datalist id="modelList"></datalist>
+    <button onclick="fetchModels()">Fetch models</button>
+  </div>
+  <div class="row">
+    <div class="switch"><input type="checkbox" id="aiNaming"><span>Theme naming + mood classification</span></div>
+  </div>
+  <div class="row">
+    <button onclick="runTest('ai', {base_url: v('aiBase'), api_key: v('aiKey'), model: v('aiModel')}, 'aiResult')">Test connection</button>
+    <div class="result" id="aiResult"></div>
+  </div>
+</section>
+
+<section>
+  <h2>Upscaling</h2>
+  <p class="hint">When artwork is smaller than its target monitor, upscale it. Topaz Gigapixel (cloud, per-image credits) or any OpenAI-compatible images endpoint.</p>
+  <div class="row">
+    <div class="switch"><input type="checkbox" id="upEnabled"><span>Upscale undersized artwork</span></div>
+  </div>
+  <div class="row">
+    <label for="upProvider">Provider</label>
+    <select id="upProvider">
+      <option value="topaz">Topaz Gigapixel API</option>
+      <option value="ai">OpenAI-compatible endpoint (from AI section)</option>
+    </select>
+  </div>
+  <div class="sub">Topaz Gigapixel</div>
+  <div class="row">
+    <label for="topazKey">API key</label>
+    <input id="topazKey" type="password" placeholder="from account.topazlabs.com/manage-api">
+    <button onclick="togglePw('topazKey')">Show</button>
+    <button onclick="runTest('topaz', {api_key: v('topazKey')}, 'topazResult')">Test</button>
+    <div class="result" id="topazResult"></div>
+  </div>
+  <div class="row">
+    <label for="topazModel">Model</label>
+    <select id="topazModel">
+      <option>Standard V2</option>
+      <option>High Fidelity V2</option>
+      <option>Low Resolution V2</option>
+      <option>Text &amp; Shapes</option>
+      <option>CG</option>
+    </select>
+  </div>
+</section>
+
+<section>
+  <h2>Extras</h2>
+  <p class="hint">Extend the theme beyond the desktop.</p>
+  <div class="row">
+    <div class="switch"><input type="checkbox" id="wtEnabled"><span>Windows Terminal color scheme</span></div>
+    <div class="switch"><input type="checkbox" id="wtBg"><span>…with hero as background image</span></div>
+    <label for="wtOpacity" style="min-width:0">opacity</label>
+    <input id="wtOpacity" type="number" min="0" max="1" step="0.05" style="max-width:80px">
+  </div>
+  <div class="row">
+    <div class="switch"><input type="checkbox" id="srgbEnabled"><span>SignalRGB lighting sync</span></div>
+    <label for="srgbBase" style="min-width:0">API URL</label>
+    <input id="srgbBase" type="text" style="max-width:230px">
+  </div>
+  <div class="row">
+    <label for="srgbMap" class="top">SignalRGB mood → effect map (JSON)</label>
+    <textarea id="srgbMap"></textarea>
+  </div>
+</section>
+
+<section>
+  <h2>Monitors</h2>
+  <p class="hint">Match is a case-insensitive substring of the display name. Roles: hero / logo / icon.
+    <button onclick="loadMonitors()">Refresh detected displays</button></p>
+  <table id="monTable"></table>
+</section>
+
+<section>
+  <h2>Activity log</h2>
+  <div id="log">(loading…)</div>
+</section>
+
+</main>
+
+<div class="actions">
+  <button class="primary" onclick="save()">Save</button>
+  <button onclick="save(true)">Save &amp; apply now</button>
+  <span id="saveState"></span>
+</div>
+
+<script>
+let cfg = {};
+
+const v = id => document.getElementById(id).value.trim();
+const setV = (id, val) => document.getElementById(id).value = val ?? "";
+const setC = (id, val) => document.getElementById(id).checked = !!val;
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} :
+    {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  return r.json();
+}
+
+function togglePw(id) {
+  const el = document.getElementById(id);
+  el.type = el.type === "password" ? "text" : "password";
+}
+
+function showResult(id, res) {
+  const el = document.getElementById(id);
+  el.className = "result " + (res.ok ? "ok" : (res.error ? "err" : "info"));
+  let msg = res.ok ? `✔ ${res.detail || "OK"} (${res.latency_ms ?? "?"} ms)` : `✘ ${res.error}`;
+  if (res.models) msg += ` — models: ${res.models.slice(0, 10).join(", ")}${res.models.length > 10 ? "…" : ""}`;
+  el.textContent = msg;
+}
+
+async function runTest(kind, body, resultId) {
+  const el = document.getElementById(resultId);
+  el.className = "result info"; el.textContent = "testing…";
+  showResult(resultId, await api("/api/test/" + kind, body));
+}
+
+async function detectSteamId() {
+  const r = await api("/api/detect-steamid");
+  if (r.steam_id64) setV("steamId", r.steam_id64);
+}
+
+function applyPreset() {
+  const p = v("aiPreset");
+  if (p === "local")      { setV("aiBase", "http://localhost:1234/v1"); setV("aiKey", "lm-studio"); }
+  if (p === "ollama")     { setV("aiBase", "http://localhost:11434/v1"); setV("aiKey", "ollama"); }
+  if (p === "openrouter") { setV("aiBase", "https://openrouter.ai/api/v1"); setV("aiModel", "z-ai/glm-4.5-air"); }
+}
+
+async function fetchModels() {
+  showResult("aiResult", {ok: null, error: null});
+  const el = document.getElementById("aiResult");
+  el.className = "result info"; el.textContent = "fetching…";
+  const r = await api("/api/test/ai", {base_url: v("aiBase"), api_key: v("aiKey"), model: v("aiModel") || "probe"});
+  const dl = document.getElementById("modelList");
+  dl.innerHTML = "";
+  (r.models || []).forEach(m => {
+    const o = document.createElement("option"); o.value = m; dl.appendChild(o);
+  });
+  showResult("aiResult", r.models && r.models.length
+    ? {ok: true, detail: `${r.models.length} models loaded into the model dropdown`, latency_ms: r.latency_ms}
+    : r);
+}
+
+// ---- monitors table
+let detected = [];
+async function loadMonitors() {
+  const r = await api("/api/monitors");
+  detected = r.monitors || [];
+  renderMonitors();
+}
+function renderMonitors() {
+  const t = document.getElementById("monTable");
+  t.innerHTML = "";
+  const rows = Math.max(detected.length, (cfg.monitors || []).length);
+  for (let i = 0; i < rows; i++) {
+    const d = detected[i] || {};
+    const c = (cfg.monitors || [])[i] || {match: "", role: "hero"};
+    const w = d.rect ? `${d.rect[2]-d.rect[0]}×${d.rect[3]-d.rect[1]}` : "";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${d.device || "monitor " + (i+1)} — ${d.desc || "not detected"} ${w}</td>
+      <td style="max-width:180px"><input data-mon="${i}" data-f="match" value="${c.match}"></td>
+      <td style="max-width:130px"><select data-mon="${i}" data-f="role">
+        ${["hero","logo","icon"].map(r => `<option ${r===c.role?"selected":""}>${r}</option>`).join("")}
+      </select></td>`;
+    t.appendChild(tr);
+  }
+}
+
+// ---- load / save
+async function load() {
+  cfg = await api("/api/config");
+  setV("appearance", cfg.appearance_preference || (cfg.force_dark_mode ? "dark" : "auto"));
+  setV("paletteMode", cfg.palette_mode || "colorful");
+  setV("poll", cfg.poll_interval_seconds ?? 30);
+  setV("excludes", (cfg.exclude_appids || []).join(", "));
+  setV("steamKey", cfg.steam_api_key); setV("steamId", cfg.steam_id64);
+  setV("sgdbKey", cfg.steamgriddb_api_key); setV("whKey", cfg.wallhaven_api_key);
+  const ai = cfg.ai || cfg.vlm || {};
+  setC("aiEnabled", ai.enabled); setV("aiBase", ai.base_url); setV("aiKey", ai.api_key); setV("aiModel", ai.model);
+  setC("aiNaming", (ai.use_for || {theme_naming: true}).theme_naming !== false);
+  const up = cfg.upscaling || {};
+  setC("upEnabled", up.enabled); setV("upProvider", up.provider || "topaz");
+  setV("topazKey", (cfg.topaz || {}).api_key); setV("topazModel", (cfg.topaz || {}).model || "Standard V2");
+  const wt = cfg.windows_terminal || {};
+  setC("wtEnabled", wt.enabled); setC("wtBg", wt.set_background_image); setV("wtOpacity", wt.background_opacity ?? 0.25);
+  const sg = cfg.signalrgb || {};
+  setC("srgbEnabled", sg.enabled); setV("srgbBase", sg.base_url || "http://localhost:16038");
+  setV("srgbMap", JSON.stringify(sg.effect_map || {}, null, 2));
+  renderMonitors();
+  loadMonitors();
+  refreshLog();
+  setInterval(refreshLog, 5000);
+}
+
+async function save(apply) {
+  cfg.appearance_preference = v("appearance");
+  cfg.force_dark_mode = v("appearance") === "dark";   // back-compat
+  cfg.palette_mode = v("paletteMode");
+  cfg.poll_interval_seconds = parseInt(v("poll")) || 30;
+  cfg.exclude_appids = v("excludes").split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+  cfg.steam_api_key = v("steamKey"); cfg.steam_id64 = v("steamId");
+  cfg.steamgriddb_api_key = v("sgdbKey"); cfg.wallhaven_api_key = v("whKey");
+  cfg.ai = {enabled: document.getElementById("aiEnabled").checked,
+            base_url: v("aiBase"), api_key: v("aiKey"), model: v("aiModel"),
+            use_for: {theme_naming: document.getElementById("aiNaming").checked}};
+  delete cfg.vlm; delete cfg.openrouter;
+  cfg.upscaling = {enabled: document.getElementById("upEnabled").checked, provider: v("upProvider")};
+  cfg.topaz = {api_key: v("topazKey"), model: v("topazModel")};
+  cfg.windows_terminal = {enabled: document.getElementById("wtEnabled").checked,
+    set_background_image: document.getElementById("wtBg").checked,
+    background_opacity: parseFloat(v("wtOpacity")) || 0.25};
+  let emap = {};
+  try { emap = JSON.parse(v("srgbMap") || "{}"); } catch (e) { alert("SignalRGB effect map is not valid JSON"); return; }
+  cfg.signalrgb = {enabled: document.getElementById("srgbEnabled").checked, base_url: v("srgbBase"), effect_map: emap};
+  const mons = [];
+  document.querySelectorAll("[data-mon]").forEach(el => {
+    const i = +el.dataset.mon;
+    mons[i] = mons[i] || {};
+    mons[i][el.dataset.f] = el.value;
+  });
+  cfg.monitors = mons.filter(m => m && m.match);
+
+  const r = await api("/api/config", cfg);
+  const st = document.getElementById("saveState");
+  st.textContent = r.ok ? "saved " + new Date().toLocaleTimeString() : "save failed: " + r.error;
+  if (r.ok && apply) {
+    const rr = await api("/api/run-now", {});
+    st.textContent += " — " + (rr.detail || "");
+    setTimeout(refreshLog, 3000);
+  }
+}
+
+async function refreshLog() {
+  const r = await api("/api/log?lines=120");
+  const el = document.getElementById("log");
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  el.textContent = r.log || "(empty)";
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+
+load();
+</script>
+</body>
+</html>

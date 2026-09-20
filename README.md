@@ -57,8 +57,9 @@ copy config.example.json config.json
 2. **SteamGridDB key** (optional but much better art): create a free key at
    https://www.steamgriddb.com/profile/preferences/api and set
    `steamgriddb_api_key`.
-3. **VLM naming** (optional): set `vlm.enabled: true` and point `base_url` at
-   your LM Studio server, or set `openrouter.enabled: true` + key.
+3. **AI / upscaling** (optional): easiest via the config UI
+   (`python main.py --ui`) — or edit `ai` / `upscaling` / `topaz` in
+   `config.json` directly.
 
 ## Run
 
@@ -67,8 +68,32 @@ python main.py --once            # check once, apply if the game changed
 python main.py --once --dry-run  # full pipeline, changes nothing
 python main.py --appid 440       # force-theme a specific game
 python main.py --reapply         # re-apply cached theme (unlock trigger)
+python main.py --ui              # browser config page at http://127.0.0.1:8765
 python main.py                   # polling service (every 30s)
 ```
+
+## Browser config UI
+
+`python main.py --ui` serves a localhost-only settings page
+(http://127.0.0.1:8765):
+
+- **General** — appearance preference (always dark / always light / auto from
+  wallpaper brightness), palette style, poll interval, excluded app IDs.
+- **Steam** — API key + SteamID64 with auto-detect, live connection test.
+- **Artwork sources** — SteamGridDB / wallhaven keys, live key test.
+- **AI / VLM** — OpenAI-compatible endpoint setup with presets (LM Studio,
+  Ollama, OpenRouter), model dropdown populated from the server's `/models`,
+  and a live chat-completion test with latency.
+- **Upscaling** — undersized artwork can be upscaled via the Topaz Gigapixel
+  API (cloud, per-image credits; the test button verifies the key *without*
+  spending any) or the AI section's endpoint (OpenAI Images API, best-effort).
+- **Extras** — Windows Terminal + SignalRGB toggles.
+- **Monitors** — auto-detected display list with per-display role mapping.
+- **Activity log** — live tail of `service.log`; "Save & apply now" re-runs
+  the pipeline immediately.
+
+The polling service reloads `config.json` every cycle, so UI saves take
+effect without a restart.
 
 ### Scheduled task (service + unlock fix)
 

@@ -8,18 +8,24 @@
   "poll_interval_seconds": 30,
 
   "palette_mode": "colorful",
+  "appearance_preference": "dark",
   "force_dark_mode": true,
 
-  "vlm": {
+  "ai": {
     "enabled": false,
     "base_url": "http://localhost:1234/v1",
     "api_key": "lm-studio",
-    "model": "glm-4.5-air"
+    "model": "glm-4.5-air",
+    "use_for": { "theme_naming": true }
   },
-  "openrouter": {
+
+  "upscaling": {
     "enabled": false,
+    "provider": "topaz"
+  },
+  "topaz": {
     "api_key": "",
-    "model": "z-ai/glm-4.5-air"
+    "model": "Standard V2"
   },
 
   "signalrgb": {

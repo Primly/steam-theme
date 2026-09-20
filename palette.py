@@ -100,9 +100,10 @@ def pick_accent(colors, weights, background):
     return (colors[0] if colors else (127, 127, 127)), "ungraded"
 
 
-def build_palette(image_path, mode="colorful", force_dark=False):
+def build_palette(image_path, mode="colorful", force=None):
+    """force: None (auto from luminance) | "dark" | "light"."""
     colors, weights = extract_palette(image_path, mode)
-    appearance = "dark" if force_dark else decide_mode(colors, weights)
+    appearance = force if force in ("dark", "light") else decide_mode(colors, weights)
     background = NEAR_BLACK if appearance == "dark" else NEAR_WHITE
     accent, grade = pick_accent(colors, weights, background)
     return {
@@ -134,15 +135,19 @@ def ai_theme_naming(cfg, image_path, palette, game_name, log=print):
     """Ask a local VLM (OpenAI-compatible, e.g. LM Studio) or OpenRouter for a
     mood classification + theme name. Returns dict or None. Never raises."""
     src = None
-    if cfg.get("vlm", {}).get("enabled"):
+    ai = cfg.get("ai", {})
+    if ai.get("enabled") and ai.get("base_url") and ai.get("model") \
+            and ai.get("use_for", {}).get("theme_naming", True):
+        src = (ai["base_url"], ai.get("api_key") or "none", ai["model"])
+    elif cfg.get("vlm", {}).get("enabled"):  # legacy config shape
         v = cfg["vlm"]
-        src = (v["base_url"], v.get("api_key", "lm-studio"), v["model"], True)
+        src = (v["base_url"], v.get("api_key", "lm-studio"), v["model"])
     elif cfg.get("openrouter", {}).get("enabled") and cfg["openrouter"].get("api_key"):
         o = cfg["openrouter"]
-        src = ("https://openrouter.ai/api/v1", o["api_key"], o["model"], True)
+        src = ("https://openrouter.ai/api/v1", o["api_key"], o["model"])
     if not src:
         return None
-    base_url, key, model, _ = src
+    base_url, key, model = src
 
     with open(image_path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
