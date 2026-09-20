@@ -81,17 +81,20 @@ def apply_signalrgb(cfg, palette, mood, log=print):
             wanted = val
             break
     try:
-        r = requests.get(f"{base}/api/v1/effects", timeout=5)
+        r = requests.get(f"{base}/api/v1/lighting/effects", timeout=5)
         r.raise_for_status()
-        effects = r.json()
-        names = [e.get("name") or e.get("id") or "" for e in
-                 (effects if isinstance(effects, list) else effects.get("effects", []))]
-        match = next((n for n in names if wanted.lower() in n.lower()), None)
+        items = r.json().get("data", {}).get("items", [])
+        effects = [(e.get("attributes", {}).get("name", ""),
+                    e.get("links", {}).get("apply")) for e in items]
+        match = next(((n, link) for n, link in effects
+                      if link and wanted.lower() in n.lower()), None)
         if not match:
-            log(f"  [srgb] no effect matching {wanted!r}; available: {names[:8]}")
+            log(f"  [srgb] no effect matching {wanted!r}; "
+                f"available: {[n for n, _ in effects][:8]}")
             return
-        requests.post(f"{base}/api/v1/effects/apply",
-                      json={"name": match, "color": palette["accent"]}, timeout=5)
-        log(f"  [srgb] applied effect '{match}'")
+        name, apply_link = match
+        ra = requests.post(base + apply_link, timeout=5)
+        ra.raise_for_status()
+        log(f"  [srgb] applied effect '{name}'")
     except Exception as e:
         log(f"  [srgb] SignalRGB not reachable or API mismatch: {e}")

@@ -86,6 +86,8 @@ def run_pipeline(cfg, game, log, dry_run=False):
         role = m["role"]
         if role in art:
             w, h = m["rect"][2] - m["rect"][0], m["rect"][3] - m["rect"][1]
+            if role in ("logo", "icon"):  # centered roles only need the fit box
+                w, h = round(w * 0.8), round(h * 0.7)
             art[role] = upscale.maybe_upscale(art[role], w, h, cfg, log)
 
     # Stage 3 — palette (+ optional VLM naming)

@@ -119,7 +119,7 @@ def build_palette(image_path, mode="colorful", force=None):
 
 # ---------------------------------------------------------------- VLM naming
 
-def _chat_completion(base_url, api_key, model, messages, timeout=60):
+def _chat_completion(base_url, api_key, model, messages, timeout=420):
     import requests
     r = requests.post(
         base_url.rstrip("/") + "/chat/completions",

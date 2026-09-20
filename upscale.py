@@ -23,16 +23,27 @@ def _needs_upscale(path, target_w, target_h):
     return (w < target_w or h < target_h), (w, h)
 
 
-def _topaz(src, dst, cfg, log, timeout_s=600):
+def _topaz(src, dst, cfg, log, target_w, target_h, timeout_s=600):
     topaz = cfg.get("topaz", {})
     key = topaz.get("api_key")
     if not key:
         log("  [up] topaz selected but no API key configured")
         return None
+    with Image.open(src) as im:
+        sw, sh = im.size
+        has_alpha = (im.mode in ("RGBA", "LA")
+                     or (im.mode == "P" and "transparency" in im.info))
+    out_fmt = "png" if has_alpha else "jpeg"  # keep logo/icon transparency
+    # proportional upscale that COVERS the target box (no letterboxing);
+    # the compositor center-crops afterward
+    scale = max(target_w / sw, target_h / sh, 1.0)
+    out_w = min(32000, round(sw * scale))
+    out_h = min(32000, round(sh * scale))
     headers = {"X-API-Key": key}
     r = requests.post(
         TOPAZ_BASE + "/enhance/async", headers=headers, timeout=60,
-        data={"model": topaz.get("model", "Standard V2"), "output_format": "jpeg"},
+        data={"model": topaz.get("model", "Standard V2"), "output_format": out_fmt,
+              "output_width": out_w, "output_height": out_h},
         files={"image": open(src, "rb")})
     if r.status_code not in (200, 201, 202):
         log(f"  [up] topaz submit failed: HTTP {r.status_code} {r.text[:200]}")
@@ -47,8 +58,21 @@ def _topaz(src, dst, cfg, log, timeout_s=600):
         log(f"  [up] topaz status: {status}")
         if status == "Completed":
             dl = requests.get(f"{TOPAZ_BASE}/download/{pid}", headers=headers,
-                              timeout=300, allow_redirects=True)
-            if dl.status_code == 200 and len(dl.content) > 10000:
+                              timeout=60)
+            if dl.status_code == 200 and "json" in dl.headers.get("Content-Type", ""):
+                # endpoint returns JSON with a signed R2 URL, not image bytes
+                url = dl.json().get("download_url") or dl.json().get("head_url")
+                if not url:
+                    log(f"  [up] topaz download: no URL in {dl.text[:200]}")
+                    return None
+                dl = requests.get(url, timeout=300)
+            if dl.status_code == 200:
+                import io
+                try:
+                    Image.open(io.BytesIO(dl.content)).verify()
+                except Exception:
+                    log(f"  [up] topaz download: not an image ({dl.text[:150] if len(dl.content) < 2000 else 'bad bytes'})")
+                    return None
                 with open(dst, "wb") as f:
                     f.write(dl.content)
                 return dst
@@ -99,14 +123,14 @@ def maybe_upscale(path, target_w, target_h, cfg, log=print):
     needed, (w, h) = _needs_upscale(path, target_w, target_h)
     if not needed:
         return path
-    dst = os.path.splitext(path)[0] + "_upscaled.jpg"
+    dst = os.path.splitext(path)[0] + "_upscaled.png"
     if os.path.exists(dst):
-        with Image.open(dst) as im:
-            if im.size[0] >= target_w or im.size[1] >= target_h:
-                return dst
+        return dst  # one upscale per source image; never re-spend credits
     log(f"  [up] {os.path.basename(path)} is {w}x{h}, target {target_w}x{target_h} — upscaling")
-    fn = _topaz if up.get("provider") == "topaz" else _ai
-    out = fn(path, dst, cfg, log)
+    if up.get("provider") == "topaz":
+        out = _topaz(path, dst, cfg, log, target_w, target_h)
+    else:
+        out = _ai(path, dst, cfg, log)
     if out:
         with Image.open(out) as im:
             log(f"  [up] done: {im.size[0]}x{im.size[1]} -> {out}")

@@ -154,16 +154,17 @@
     <button onclick="togglePw('aiKey')">Show</button>
   </div>
   <div class="row">
-    <label for="aiModel">Model</label>
-    <input id="aiModel" type="text" list="modelList" placeholder="glm-4.5-air">
-    <datalist id="modelList"></datalist>
-    <button onclick="fetchModels()">Fetch models</button>
+    <label for="aiModelSel">Model</label>
+    <select id="aiModelSel" onchange="if (this.value === '__custom__') showModelInput(true)"></select>
+    <input id="aiModel" type="text" placeholder="type a model id" style="display:none">
+    <button onclick="showModelInput(true)">Custom…</button>
+    <button onclick="fetchModels()">Refresh list</button>
   </div>
   <div class="row">
     <div class="switch"><input type="checkbox" id="aiNaming"><span>Theme naming + mood classification</span></div>
   </div>
   <div class="row">
-    <button onclick="runTest('ai', {base_url: v('aiBase'), api_key: v('aiKey'), model: v('aiModel')}, 'aiResult')">Test connection</button>
+    <button onclick="runTest('ai', {base_url: v('aiBase'), api_key: v('aiKey'), model: modelVal()}, 'aiResult')">Test connection</button>
     <div class="result" id="aiResult"></div>
   </div>
 </section>
@@ -285,19 +286,43 @@ function applyPreset() {
   if (p === "openrouter") { setV("aiBase", "https://openrouter.ai/api/v1"); setV("aiModel", "z-ai/glm-4.5-air"); }
 }
 
-async function fetchModels() {
-  showResult("aiResult", {ok: null, error: null});
-  const el = document.getElementById("aiResult");
-  el.className = "result info"; el.textContent = "fetching…";
-  const r = await api("/api/test/ai", {base_url: v("aiBase"), api_key: v("aiKey"), model: v("aiModel") || "probe"});
-  const dl = document.getElementById("modelList");
-  dl.innerHTML = "";
-  (r.models || []).forEach(m => {
-    const o = document.createElement("option"); o.value = m; dl.appendChild(o);
+function modelVal() {
+  const inp = document.getElementById("aiModel");
+  return inp.style.display === "none" ? v("aiModelSel") : v("aiModel");
+}
+
+function showModelInput(show) {
+  document.getElementById("aiModel").style.display = show ? "" : "none";
+  document.getElementById("aiModelSel").style.display = show ? "none" : "";
+  if (show) setV("aiModel", v("aiModelSel") === "__custom__" ? "" : v("aiModelSel"));
+}
+
+function populateModelSelect(models, current) {
+  const sel = document.getElementById("aiModelSel");
+  sel.innerHTML = "";
+  const all = [...models];
+  if (current && !all.includes(current)) all.unshift(current);
+  all.forEach(m => {
+    const o = document.createElement("option");
+    o.value = m; o.textContent = m; sel.appendChild(o);
   });
-  showResult("aiResult", r.models && r.models.length
-    ? {ok: true, detail: `${r.models.length} models loaded into the model dropdown`, latency_ms: r.latency_ms}
-    : r);
+  const c = document.createElement("option");
+  c.value = "__custom__"; c.textContent = "— Custom… —"; sel.appendChild(c);
+  if (current) sel.value = current;
+  showModelInput(false);
+}
+
+async function fetchModels() {
+  const el = document.getElementById("aiResult");
+  el.className = "result info"; el.textContent = "fetching model list…";
+  const r = await api("/api/test/ai", {base_url: v("aiBase"), api_key: v("aiKey"), model: "probe"});
+  if (r.models && r.models.length) {
+    populateModelSelect(r.models, modelVal());
+    showResult("aiResult", {ok: true, latency_ms: r.latency_ms,
+      detail: `${r.models.length} models available — pick one from the dropdown`});
+  } else {
+    showResult("aiResult", {ok: false, error: r.error || "server returned no models"});
+  }
 }
 
 // ---- monitors table
@@ -335,7 +360,8 @@ async function load() {
   setV("steamKey", cfg.steam_api_key); setV("steamId", cfg.steam_id64);
   setV("sgdbKey", cfg.steamgriddb_api_key); setV("whKey", cfg.wallhaven_api_key);
   const ai = cfg.ai || cfg.vlm || {};
-  setC("aiEnabled", ai.enabled); setV("aiBase", ai.base_url); setV("aiKey", ai.api_key); setV("aiModel", ai.model);
+  setC("aiEnabled", ai.enabled); setV("aiBase", ai.base_url); setV("aiKey", ai.api_key);
+  populateModelSelect([], ai.model);
   setC("aiNaming", (ai.use_for || {theme_naming: true}).theme_naming !== false);
   const up = cfg.upscaling || {};
   setC("upEnabled", up.enabled); setV("upProvider", up.provider || "topaz");
@@ -360,7 +386,7 @@ async function save(apply) {
   cfg.steam_api_key = v("steamKey"); cfg.steam_id64 = v("steamId");
   cfg.steamgriddb_api_key = v("sgdbKey"); cfg.wallhaven_api_key = v("whKey");
   cfg.ai = {enabled: document.getElementById("aiEnabled").checked,
-            base_url: v("aiBase"), api_key: v("aiKey"), model: v("aiModel"),
+            base_url: v("aiBase"), api_key: v("aiKey"), model: modelVal(),
             use_for: {theme_naming: document.getElementById("aiNaming").checked}};
   delete cfg.vlm; delete cfg.openrouter;
   cfg.upscaling = {enabled: document.getElementById("upEnabled").checked, provider: v("upProvider")};

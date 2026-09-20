@@ -151,9 +151,13 @@ def compose_wallpaper(monitors, art, out_path, log=print):
         l, t, r, b = m["rect"]
         w, h = r - l, b - t
         img = Image.open(src)
+        iw, ih = img.size
+        # scene art covers its monitor; logos/icons (transparent, oddly
+        # proportioned, or small) get centered on a blurred hero backdrop
+        covers = (iw >= w * 0.6 and ih >= h * 0.6
+                  and abs((iw / ih) / (w / h) - 1) < 0.35)
         centered = (m["role"] in ("logo", "icon") and src != hero
-                    and (_has_transparency(img)
-                         or img.size[0] < w * 0.6 or img.size[1] < h * 0.6))
+                    and (_has_transparency(img) or not covers))
         if centered:
             log(f"  [wall] {m['role']} art is transparent/small -> centered treatment")
             tile = _centered_on_backdrop(img, Image.open(hero).convert("RGB"), w, h)
