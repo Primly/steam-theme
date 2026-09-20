@@ -1,0 +1,12 @@
+# secrets + local state
+config.json
+state.json
+service.log
+
+# generated wallpapers/themes (large, machine-specific)
+cache/
+
+# python
+__pycache__/
+*.pyc
+.venv/

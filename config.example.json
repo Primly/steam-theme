@@ -1,0 +1,51 @@
+{
+  "steam_api_key": "YOUR_STEAM_WEB_API_KEY",
+  "steam_id64": "",
+
+  "steamgriddb_api_key": "YOUR_STEAMGRIDDB_KEY_OR_EMPTY",
+  "wallhaven_api_key": "",
+
+  "poll_interval_seconds": 30,
+
+  "palette_mode": "colorful",
+  "force_dark_mode": true,
+
+  "vlm": {
+    "enabled": false,
+    "base_url": "http://localhost:1234/v1",
+    "api_key": "lm-studio",
+    "model": "glm-4.5-air"
+  },
+  "openrouter": {
+    "enabled": false,
+    "api_key": "",
+    "model": "z-ai/glm-4.5-air"
+  },
+
+  "signalrgb": {
+    "enabled": false,
+    "base_url": "http://localhost:16038",
+    "effect_map": {
+      "default": "Solid Color",
+      "neon": "Rainbow Wave",
+      "dark fantasy": "Ember"
+    }
+  },
+  "windows_terminal": {
+    "enabled": true,
+    "set_background_image": true,
+    "background_opacity": 0.25
+  },
+
+  "monitors": [
+    { "match": "LS49AG95", "role": "hero" },
+    { "match": "3220DGF",  "role": "logo" },
+    { "match": "PDM-15T",  "role": "icon" }
+  ],
+
+  "exclude_appids": [431960],
+
+  "cache_dir": "cache",
+  "state_file": "state.json",
+  "log_file": "service.log"
+}
