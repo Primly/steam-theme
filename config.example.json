@@ -25,7 +25,9 @@
   },
   "topaz": {
     "api_key": "",
-    "model": "Standard V2"
+    "model": "Standard V2",
+    "creativity": 3,
+    "prompt": ""
   },
 
   "signalrgb": {

@@ -16,6 +16,13 @@ from PIL import Image
 
 TOPAZ_BASE = "https://api.topazlabs.com/image/v1"
 
+# models served by the /enhance-gen/async (creative/generative) endpoint;
+# anything else goes to the precision /enhance/async endpoint
+TOPAZ_GENERATIVE_MODELS = {
+    "Wonder", "Wonder 3", "Redefine", "Bloom", "Bloom 2", "Bloom Realism",
+    "Reimagine", "Standard MAX", "Recovery V2",
+}
+
 
 def _needs_upscale(path, target_w, target_h):
     with Image.open(path) as im:
@@ -23,12 +30,16 @@ def _needs_upscale(path, target_w, target_h):
     return (w < target_w or h < target_h), (w, h)
 
 
-def _topaz(src, dst, cfg, log, target_w, target_h, timeout_s=600):
+def _topaz(src, dst, cfg, log, target_w, target_h, context=None, timeout_s=600):
     topaz = cfg.get("topaz", {})
     key = topaz.get("api_key")
     if not key:
         log("  [up] topaz selected but no API key configured")
         return None
+    model = topaz.get("model", "Standard V2")
+    endpoint_pref = topaz.get("endpoint", "auto")
+    generative = (endpoint_pref == "enhance-gen"
+                  or (endpoint_pref == "auto" and model in TOPAZ_GENERATIVE_MODELS))
     with Image.open(src) as im:
         sw, sh = im.size
         has_alpha = (im.mode in ("RGBA", "LA")
@@ -39,11 +50,27 @@ def _topaz(src, dst, cfg, log, target_w, target_h, timeout_s=600):
     scale = max(target_w / sw, target_h / sh, 1.0)
     out_w = min(32000, round(sw * scale))
     out_h = min(32000, round(sh * scale))
+
+    data = {"model": model, "output_format": out_fmt,
+            "output_width": out_w, "output_height": out_h}
+    if generative:
+        data["creativity"] = str(topaz.get("creativity", 3))
+        prompt = (topaz.get("prompt") or "").strip()
+        if prompt and context:
+            prompt = prompt.format(game=context.get("game", ""),
+                                   mood=context.get("mood", ""))[:1024]
+        if prompt:
+            data["prompt"] = prompt
+        else:
+            data["autoprompt"] = "true"
+        timeout_s = max(timeout_s, 900)  # generative jobs run longer
+        log(f"  [up] generative model '{model}' (creativity {data['creativity']}, "
+            f"prompt: {data.get('prompt', '<autoprompt>')[:80]})")
+
     headers = {"X-API-Key": key}
     r = requests.post(
-        TOPAZ_BASE + "/enhance/async", headers=headers, timeout=60,
-        data={"model": topaz.get("model", "Standard V2"), "output_format": out_fmt,
-              "output_width": out_w, "output_height": out_h},
+        TOPAZ_BASE + ("/enhance-gen/async" if generative else "/enhance/async"),
+        headers=headers, timeout=60, data=data,
         files={"image": open(src, "rb")})
     if r.status_code not in (200, 201, 202):
         log(f"  [up] topaz submit failed: HTTP {r.status_code} {r.text[:200]}")
@@ -115,7 +142,7 @@ def _ai(src, dst, cfg, log, timeout_s=300):
         return None
 
 
-def maybe_upscale(path, target_w, target_h, cfg, log=print):
+def maybe_upscale(path, target_w, target_h, cfg, log=print, context=None):
     """Return an upscaled path if needed+configured, else the original path."""
     up = cfg.get("upscaling", {})
     if not up.get("enabled"):
@@ -128,7 +155,7 @@ def maybe_upscale(path, target_w, target_h, cfg, log=print):
         return dst  # one upscale per source image; never re-spend credits
     log(f"  [up] {os.path.basename(path)} is {w}x{h}, target {target_w}x{target_h} — upscaling")
     if up.get("provider") == "topaz":
-        out = _topaz(path, dst, cfg, log, target_w, target_h)
+        out = _topaz(path, dst, cfg, log, target_w, target_h, context)
     else:
         out = _ai(path, dst, cfg, log)
     if out:

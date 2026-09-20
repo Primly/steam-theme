@@ -82,13 +82,6 @@ def run_pipeline(cfg, game, log, dry_run=False):
     # monitors first, so art can be upscaled toward its target display
     monitors = theme_mod.assign_roles(theme_mod.enumerate_monitors(),
                                       cfg.get("monitors", []), log)
-    for m in monitors:
-        role = m["role"]
-        if role in art:
-            w, h = m["rect"][2] - m["rect"][0], m["rect"][3] - m["rect"][1]
-            if role in ("logo", "icon"):  # centered roles only need the fit box
-                w, h = round(w * 0.8), round(h * 0.7)
-            art[role] = upscale.maybe_upscale(art[role], w, h, cfg, log)
 
     # Stage 3 — palette (+ optional VLM naming)
     hero = art.get("hero") or next(iter(art.values()))
@@ -109,6 +102,17 @@ def run_pipeline(cfg, game, log, dry_run=False):
                 pal["appearance"] = ai.get("appearance", pal["appearance"])
     theme_name = (ai or {}).get("theme_name") or f"{name} — Steam Wallpaper"
     mood = (ai or {}).get("mood", "")
+
+    # upscale after VLM naming so the mood can steer generative Topaz models
+    up_ctx = {"game": name, "mood": mood}
+    for m in monitors:
+        role = m["role"]
+        if role in art:
+            w, h = m["rect"][2] - m["rect"][0], m["rect"][3] - m["rect"][1]
+            if role in ("logo", "icon"):  # centered roles only need the fit box
+                w, h = round(w * 0.8), round(h * 0.7)
+            art[role] = upscale.maybe_upscale(art[role], w, h, cfg, log,
+                                              context=up_ctx)
     pal["theme_name"] = theme_name
     pal["mood"] = mood
     log(f"  [pal] {pal['appearance']} mode, accent {pal['accent']} "

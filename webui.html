@@ -193,12 +193,30 @@
   <div class="row">
     <label for="topazModel">Model</label>
     <select id="topazModel">
-      <option>Standard V2</option>
-      <option>High Fidelity V2</option>
-      <option>Low Resolution V2</option>
-      <option>Text &amp; Shapes</option>
-      <option>CG</option>
+      <optgroup label="Precision (Gigapixel — faithful, 1 credit / 24 MP)">
+        <option>Standard V2</option>
+        <option>High Fidelity V2</option>
+        <option>Low Resolution V2</option>
+        <option>Text &amp; Shapes</option>
+        <option>CG</option>
+      </optgroup>
+      <optgroup label="Generative (creative — reinterprets detail, ~1 credit / 2 MP)">
+        <option>Bloom 2</option>
+        <option>Wonder 3</option>
+        <option>Redefine</option>
+        <option>Bloom Realism</option>
+        <option>Recovery V2</option>
+        <option>Standard MAX</option>
+      </optgroup>
     </select>
+  </div>
+  <div class="row">
+    <label for="topazCreativity">Creativity (generative, 1–9)</label>
+    <input id="topazCreativity" type="number" min="1" max="9" step="1">
+  </div>
+  <div class="row">
+    <label for="topazPrompt" class="top">Prompt (generative)</label>
+    <textarea id="topazPrompt" placeholder="{game} key art, {mood} atmosphere — placeholders filled per game; empty = Topaz autoprompt"></textarea>
   </div>
 </section>
 
@@ -366,6 +384,7 @@ async function load() {
   const up = cfg.upscaling || {};
   setC("upEnabled", up.enabled); setV("upProvider", up.provider || "topaz");
   setV("topazKey", (cfg.topaz || {}).api_key); setV("topazModel", (cfg.topaz || {}).model || "Standard V2");
+  setV("topazCreativity", (cfg.topaz || {}).creativity ?? 3); setV("topazPrompt", (cfg.topaz || {}).prompt);
   const wt = cfg.windows_terminal || {};
   setC("wtEnabled", wt.enabled); setC("wtBg", wt.set_background_image); setV("wtOpacity", wt.background_opacity ?? 0.25);
   const sg = cfg.signalrgb || {};
@@ -390,7 +409,8 @@ async function save(apply) {
             use_for: {theme_naming: document.getElementById("aiNaming").checked}};
   delete cfg.vlm; delete cfg.openrouter;
   cfg.upscaling = {enabled: document.getElementById("upEnabled").checked, provider: v("upProvider")};
-  cfg.topaz = {api_key: v("topazKey"), model: v("topazModel")};
+  cfg.topaz = {api_key: v("topazKey"), model: v("topazModel"),
+               creativity: parseInt(v("topazCreativity")) || 3, prompt: v("topazPrompt")};
   cfg.windows_terminal = {enabled: document.getElementById("wtEnabled").checked,
     set_background_image: document.getElementById("wtBg").checked,
     background_opacity: parseFloat(v("wtOpacity")) || 0.25};
