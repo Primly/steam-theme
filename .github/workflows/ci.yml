@@ -10,7 +10,7 @@ jobs:
     # Windows runner: the app imports winreg/ctypes Windows APIs at module load
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
