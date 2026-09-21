@@ -51,8 +51,21 @@ _BOOT = """
     return m ? [parseInt(m[1],16), parseInt(m[2],16), parseInt(m[3],16)] : [0,0,0];
   }
   function rgbStr(c, a) { return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + (a==null?1:a) + ")"; }
-  var C1 = hexToRgb(color1), C2 = hexToRgb(color2), C3 = hexToRgb(color3);
-  var PAL = [C1, C2, C3];
+  // SignalRGB injects meta-property globals (color1, speed, ...) AFTER the
+  // page script runs, so reading them at top level aborts the script with a
+  // ReferenceError and every engine callback then fails on the unassigned
+  // vars. Everything property-derived is built lazily by ensureInit(), first
+  // called from the rAF loop / engine callbacks.
+  var C1 = null, C2 = null, C3 = null, PAL = null;
+  var ready = false;
+  function ensureInit() {
+    if (ready) return true;
+    if (typeof color1 === "undefined") return false;
+    C1 = hexToRgb(color1); C2 = hexToRgb(color2); C3 = hexToRgb(color3);
+    PAL = [C1, C2, C3];
+    ready = true;
+    return true;
+  }
   function lerp(a, b, t) { return a + (b - a) * t; }
   function palColor(t) {  // t in [0,1), cycles through palette
     t = ((t % 1) + 1) % 1;
@@ -60,9 +73,9 @@ _BOOT = """
     var f = seg - Math.floor(seg);
     return [lerp(PAL[i][0], PAL[j][0], f), lerp(PAL[i][1], PAL[j][1], f), lerp(PAL[i][2], PAL[j][2], f)];
   }
-  function oncolor1Changed() { C1 = hexToRgb(color1); PAL[0] = C1; }
-  function oncolor2Changed() { C2 = hexToRgb(color2); PAL[1] = C2; }
-  function oncolor3Changed() { C3 = hexToRgb(color3); PAL[2] = C3; }
+  function oncolor1Changed() { if (!ensureInit()) return; C1 = hexToRgb(color1); PAL[0] = C1; }
+  function oncolor2Changed() { if (!ensureInit()) return; C2 = hexToRgb(color2); PAL[1] = C2; }
+  function oncolor3Changed() { if (!ensureInit()) return; C3 = hexToRgb(color3); PAL[2] = C3; }
 
   // --- keypress layer -------------------------------------------------------
   // SignalRGB calls onCanvasTapped(x, y) in 320x200 canvas coordinates when a
@@ -71,9 +84,11 @@ _BOOT = """
   var taps = [];
   function onCanvasTapped(x, y) {
     if (typeof tapEffects !== "undefined" && !tapEffects) return;
+    if (!ensureInit()) return;
     taps.push({x: x, y: y, r: 2, life: 1.0});
   }
   function drawTaps() {  // double ring, like the stock ripple keytap effects
+    if (!taps) return;
     for (var i = taps.length - 1; i >= 0; i--) {
       var tp = taps[i];
       tp.r += 1.5 + speed / 3;
@@ -120,6 +135,7 @@ def _solid(title, c1, c2, c3):
   };
   var t = 0;
   function update() {
+    if (!ensureInit()) { window.requestAnimationFrame(update); return; }
     var a = 1;
     if (breathe) { t += speed / 200; a = Math.sin(t) * 0.35 + 0.65; }
     ctx.fillStyle = rgbStr(C1, a);
@@ -127,7 +143,7 @@ def _solid(title, c1, c2, c3):
     drawTaps();
     window.requestAnimationFrame(update);
   }
-  update();
+  window.requestAnimationFrame(update);
 """
     return _page(title, c1, c2, c3, meta, js)
 
@@ -139,6 +155,7 @@ def _gradient(title, c1, c2, c3):
     js = """
   var phase = 0;
   function update() {
+    if (!ensureInit()) { window.requestAnimationFrame(update); return; }
     phase += speed / 4000;
     var horizontal = (direction.indexOf("Left") >= 0 || direction.indexOf("Right") >= 0);
     var reverse = (direction.indexOf("Right") >= 0 || direction.indexOf("Bottom") >= 0);
@@ -153,7 +170,7 @@ def _gradient(title, c1, c2, c3):
     drawTaps();
     window.requestAnimationFrame(update);
   }
-  update();
+  window.requestAnimationFrame(update);
 """
     return _page(title, c1, c2, c3, meta, js)
 
@@ -162,6 +179,7 @@ def _pulse(title, c1, c2, c3):
     js = """
   var t = 0;
   function update() {
+    if (!ensureInit()) { window.requestAnimationFrame(update); return; }
     t += speed / 150;
     var p = Math.sin(t) * 0.5 + 0.5;            // 0..1
     ctx.fillStyle = "black";
@@ -175,7 +193,7 @@ def _pulse(title, c1, c2, c3):
     drawTaps();
     window.requestAnimationFrame(update);
   }
-  update();
+  window.requestAnimationFrame(update);
 """
     return _page(title, c1, c2, c3, "", js)
 
@@ -186,6 +204,7 @@ def _ripple(title, c1, c2, c3):
     js = """
   var ripples = [], frame = 0;
   function update() {
+    if (!ensureInit()) { window.requestAnimationFrame(update); return; }
     frame++;
     ctx.fillStyle = (typeof base !== "undefined") ? base : "#0A0A0E";
     ctx.fillRect(0, 0, W, H);
@@ -205,19 +224,24 @@ def _ripple(title, c1, c2, c3):
     drawTaps();
     window.requestAnimationFrame(update);
   }
-  update();
+  window.requestAnimationFrame(update);
 """
     return _page(title, c1, c2, c3, meta, js)
 
 
 def _rain(title, c1, c2, c3):
     js = """
-  var drops = [];
-  for (var i = 0; i < 70; i++) {
-    drops.push({x: Math.random()*W, y: Math.random()*H, v: 1 + Math.random()*3,
-                len: 8 + Math.random()*18, col: PAL[i % PAL.length]});
-  }
+  var drops = null;  // built on first ready frame: needs PAL, which needs
+                     // the engine-injected property globals
   function update() {
+    if (!ensureInit()) { window.requestAnimationFrame(update); return; }
+    if (!drops) {
+      drops = [];
+      for (var k = 0; k < 70; k++) {
+        drops.push({x: Math.random()*W, y: Math.random()*H, v: 1 + Math.random()*3,
+                    len: 8 + Math.random()*18, col: PAL[k % PAL.length]});
+      }
+    }
     ctx.fillStyle = "rgba(5,5,8,0.25)";   // trail fade
     ctx.fillRect(0, 0, W, H);
     for (var i = 0; i < drops.length; i++) {
@@ -230,7 +254,7 @@ def _rain(title, c1, c2, c3):
     drawTaps();
     window.requestAnimationFrame(update);
   }
-  update();
+  window.requestAnimationFrame(update);
 """
     return _page(title, c1, c2, c3, "", js)
 
@@ -239,6 +263,7 @@ def _comet(title, c1, c2, c3):
     js = """
   var x = 0;
   function update() {
+    if (!ensureInit()) { window.requestAnimationFrame(update); return; }
     ctx.fillStyle = "rgba(5,5,8,0.18)";   // trail fade
     ctx.fillRect(0, 0, W, H);
     x += 1 + speed / 2;
@@ -252,7 +277,7 @@ def _comet(title, c1, c2, c3):
     drawTaps();
     window.requestAnimationFrame(update);
   }
-  update();
+  window.requestAnimationFrame(update);
 """
     return _page(title, c1, c2, c3, "", js)
 
