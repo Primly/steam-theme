@@ -161,7 +161,7 @@ TESTS = {"steam": test_steam, "sgdb": test_sgdb, "ai": test_ai, "topaz": test_to
 # -------------------------------------------------------------------- server
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "SteamWallpaperUI/1.0"
+    server_version = "SteamThemeUI/1.0"
 
     def _send(self, code, obj=None, content_type="application/json", raw=None):
         body = raw if raw is not None else json.dumps(obj).encode()

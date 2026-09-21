@@ -14,7 +14,8 @@ import json
 import os
 import winreg
 
-SRGB_EFFECT_TITLE = "Steam Wallpaper"
+SRGB_EFFECT_TITLE = "Steam Theme"
+SRGB_LEGACY_TITLES = ("Steam Wallpaper",)  # pre-rename; cleaned up on write
 
 # terminal slot order used by Windows Terminal schemes
 _WT_SLOTS = ["black", "red", "green", "yellow", "blue", "purple", "cyan", "white",
@@ -88,7 +89,7 @@ def _documents_dir():
 
 
 def write_signalrgb_effect(cfg, palette, log=print):
-    """Write 'Steam Wallpaper.html' in the configured style, skinned with the
+    """Write 'Steam Theme.html' in the configured style, skinned with the
     theme palette. Returns the effect title on success, None otherwise."""
     import srgb_effects
     style = cfg.get("signalrgb", {}).get("effect_style", "gradient")
@@ -97,6 +98,11 @@ def write_signalrgb_effect(cfg, palette, log=print):
                    or os.path.join(_documents_dir(), "WhirlwindFX", "Effects"))
     try:
         os.makedirs(effects_dir, exist_ok=True)
+        for legacy in SRGB_LEGACY_TITLES:  # remove stale pre-rename effects
+            old = os.path.join(effects_dir, f"{legacy}.html")
+            if os.path.exists(old):
+                os.remove(old)
+                log(f"  [srgb] removed legacy effect {old}")
         path = os.path.join(effects_dir, f"{SRGB_EFFECT_TITLE}.html")
         with open(path, "w", encoding="utf-8") as f:
             f.write(html)

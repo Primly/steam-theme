@@ -27,8 +27,8 @@ STYLES = {
 
 _HEAD = """<head>
   <title>{title}</title>
-  <meta description="Auto-generated from the current Steam game theme by SteamWallpaper. Colors are regenerated per game; tweak freely in between."/>
-  <meta publisher="SteamWallpaper"/>
+  <meta description="Auto-generated from the current Steam game theme by Steam Theme. Colors are regenerated per game; tweak freely in between."/>
+  <meta publisher="SteamTheme"/>
   <meta property="color1" label="Accent" type="color" min="0" max="360" default="{c1}"/>
   <meta property="color2" label="Palette 2" type="color" min="0" max="360" default="{c2}"/>
   <meta property="color3" label="Palette 3" type="color" min="0" max="360" default="{c3}"/>

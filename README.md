@@ -1,4 +1,4 @@
-# Steam Wallpaper
+# Steam Theme
 
 Turns your last-played Steam game into a full Windows theme: per-monitor
 wallpaper, accent color, dark/light mode, Windows Terminal scheme, and
@@ -72,21 +72,20 @@ commands go in **PowerShell** (Start menu → type `PowerShell` → Enter).
 
    ```powershell
    cd $env:USERPROFILE\Documents
-   git clone https://github.com/Primly/steam-wallpaper.git
-   cd steam-wallpaper
+   git clone https://github.com/Primly/steam-theme.git
+   cd steam-theme
    ```
 
-   The repository is **private**, so the first clone pops up a GitHub sign-in
-   in your browser — sign in once and Windows remembers it.
+   The repository is public, so cloning just works.
 
 **Option B — without git:**
 
-1. Open the repository page in your browser (while signed in to GitHub),
+1. Open <https://github.com/Primly/steam-theme> in your browser,
    click the green **Code** button → **Download ZIP**.
 2. Extract the ZIP, then in PowerShell `cd` into the extracted folder, e.g.:
 
    ```powershell
-   cd $env:USERPROFILE\Downloads\steam-wallpaper-main
+   cd $env:USERPROFILE\Downloads\steam-theme-main
    ```
 
 **Updating later:** with Option A, run `git pull` inside the project folder.
@@ -194,12 +193,14 @@ effect without a restart.
 powershell -ExecutionPolicy Bypass -File install_task.ps1
 ```
 
-Creates `SteamWallpaperTheme` (logon → polling service),
-`SteamWallpaperUI` (logon → config page on http://127.0.0.1:8765), and —
-when run from an **elevated** shell — `SteamWallpaperTheme-Unlock`
+Creates `SteamTheme` (logon → polling service),
+`SteamThemeUI` (logon → config page on http://127.0.0.1:8765), and —
+when run from an **elevated** shell — `SteamTheme-Unlock`
 (workstation unlock → `--reapply`), which fixes the half-applied "hybrid
 Custom" theme Windows can leave when a theme is applied while the session is
-locked. Without elevation the unlock task is skipped with a note.
+locked. Without elevation the unlock task is skipped with a note. Re-running
+the installer automatically migrates tasks registered under the app's old
+name (`SteamWallpaperTheme` / `SteamWallpaperUI`).
 
 ## SignalRGB integration — how it works
 
@@ -208,7 +209,7 @@ locked. Without elevation the unlock task is skipped with a note.
 Every time the pipeline themes a game, your RGB lighting switches to an
 effect **generated from that game's palette** — not just a static effect you
 picked beforehand. The generated effect appears in SignalRGB's effect list
-as **“Steam Wallpaper”** and is applied automatically.
+as **“Steam Theme”** and is applied automatically.
 
 ### Why it works this way
 
@@ -216,7 +217,7 @@ SignalRGB's local REST API can **apply** existing effects and **read** their
 settings, but it cannot **change** an effect's colors — parameter writes are
 silently ignored (verified against the live API). Effects, however, are just
 HTML/JS canvas files ("Lightscripts"). So instead of configuring an existing
-effect, the pipeline **authors one**: it writes `Steam Wallpaper.html`,
+effect, the pipeline **authors one**: it writes `Steam Theme.html`,
 skinned with the current theme palette, into your effects folder, then
 applies it over the API.
 
@@ -230,12 +231,12 @@ applies it over the API.
    If your Documents folder is redirected (e.g. OneDrive), the app finds the
    real path automatically; `signalrgb.effects_dir` overrides it.
 3. **One restart of SignalRGB** after the first run, so it discovers the new
-   `Steam Wallpaper.html` file. (SignalRGB only scans the effects folder at
+   `Steam Theme.html` file. (SignalRGB only scans the effects folder at
    launch.) After that, every game update is applied live — no restarts.
 4. Enable **SignalRGB lighting sync** in the Extras section of the config UI.
 
 You can verify discovery any time in SignalRGB: the effect appears under
-Lighting Effects as “Steam Wallpaper” (publisher: SteamWallpaper).
+Lighting Effects as “Steam Theme” (publisher: SteamTheme).
 
 ### Effect styles
 
@@ -299,7 +300,7 @@ reactivity, at the cost of palette skinning.
 - `exclude_appids` defaults to `[431960]` (Wallpaper Engine — not a game).
 - SignalRGB's REST API can only apply existing effects — parameters are
   read-only over HTTP. So the pipeline generates a custom palette-gradient
-  effect (`Steam Wallpaper.html`) into `Documents\WhirlwindFX\Effects` and
+  effect (`Steam Theme.html`) into `Documents\WhirlwindFX\Effects` and
   applies it by name. One SignalRGB restart is needed the first time so it
   discovers the file; afterwards every game updates it live. Set
   `signalrgb.custom_effect: false` to always use the named

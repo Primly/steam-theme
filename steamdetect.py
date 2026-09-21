@@ -27,7 +27,7 @@ def get_steam_id64():
 
 
 def _get_json(url):
-    req = urllib.request.Request(url, headers={"User-Agent": "steam-wallpaper/1.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "steam-theme/1.0"})
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.load(r)
 

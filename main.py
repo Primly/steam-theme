@@ -1,4 +1,4 @@
-"""Steam Wallpaper service.
+"""Steam Theme service.
 
 Polls Steam for the last-played game; when it changes, runs the pipeline:
   detect -> fetch art -> palette -> compose per-monitor wallpaper -> .theme
@@ -133,7 +133,7 @@ def run_pipeline(cfg, game, log, dry_run=False):
             pal = palette_mod.build_palette(hero, ai["palette_mode"], force=force)
             if pref == "auto":
                 pal["appearance"] = ai.get("appearance", pal["appearance"])
-    theme_name = (ai or {}).get("theme_name") or f"{name} — Steam Wallpaper"
+    theme_name = (ai or {}).get("theme_name") or f"{name} — Steam Theme"
     mood = (ai or {}).get("mood", "")
 
     # upscale after VLM naming so the mood can steer generative Topaz models
@@ -253,7 +253,7 @@ def check_once(cfg, log, force=False, appid_override=None, dry_run=False):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Steam last-played-game wallpaper service")
+    ap = argparse.ArgumentParser(description="Steam Theme — last-played-game wallpaper service")
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--reapply", action="store_true")

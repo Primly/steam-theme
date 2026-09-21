@@ -16,7 +16,7 @@ from PIL import Image
 SGDB = "https://www.steamgriddb.com/api/v2"
 CDN = "https://cdn.cloudflare.steamstatic.com/steam/apps"
 
-UA = {"User-Agent": "steam-wallpaper/1.0"}
+UA = {"User-Agent": "steam-theme/1.0"}
 MIN_DIMENSION = 512  # px; anything smaller is too blurry to fill a monitor
 
 
