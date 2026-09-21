@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import main  # noqa: E402
 import theme  # noqa: E402
+import extras  # noqa: E402
 import srgb_effects  # noqa: E402
 import steamdetect  # noqa: E402
 
@@ -119,6 +120,31 @@ class TestSteamDetectShapes(unittest.TestCase):
     def test_custom_game_empty_config(self):
         self.assertIsNone(steamdetect.find_running_custom_game([]))
         self.assertIsNone(steamdetect.find_running_custom_game(None))
+
+
+class TestEffectTitles(unittest.TestCase):
+    def test_per_game_title(self):
+        cfg = {"signalrgb": {"effect_scope": "per_game"}}
+        pal = {"game_name": "The Witcher 3: Wild Hunt", "theme_name": "Ashen Vigil"}
+        self.assertEqual(extras.effect_title(cfg, pal),
+                         "Steam Theme - The Witcher 3_ Wild Hunt")
+
+    def test_single_scope(self):
+        cfg = {"signalrgb": {"effect_scope": "single"}}
+        self.assertEqual(extras.effect_title(cfg, {"game_name": "X"}),
+                         "Steam Theme")
+
+    def test_default_scope_per_game_with_theme_name_fallback(self):
+        self.assertEqual(extras.effect_title({}, {"theme_name": "Ashen Vigil"}),
+                         "Steam Theme - Ashen Vigil")
+        self.assertEqual(extras.effect_title({}, {}), "Steam Theme")
+
+    def test_safe_name_strips_forbidden_chars(self):
+        # Windows-forbidden: < > : " / \ | ? *
+        self.assertEqual(extras._safe_title_name("a<b>/c"), "a_b__c")
+        self.assertEqual(extras._safe_title_name("Game: The \"Sequel\""),
+                         "Game_ The _Sequel_")
+        self.assertEqual(extras._safe_title_name("..."), "Game")
 
 
 class TestConfigLoading(unittest.TestCase):

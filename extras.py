@@ -17,6 +17,26 @@ import winreg
 SRGB_EFFECT_TITLE = "Steam Theme"
 SRGB_LEGACY_TITLES = ("Steam Wallpaper",)  # pre-rename; cleaned up on write
 
+_WIN_FORBIDDEN = '<>:"/\\|?*'
+
+
+def _safe_title_name(name):
+    """Filesystem-safe effect-name fragment from a game/theme name."""
+    s = "".join("_" if c in _WIN_FORBIDDEN else c for c in str(name))
+    return s.strip().strip(".").strip()[:60] or "Game"
+
+
+def effect_title(cfg, palette):
+    """Effect title for this palette. In per_game scope every game gets its
+    own 'Steam Theme - <Game>' effect (individually tweakable in SignalRGB);
+    in single scope everything shares the one 'Steam Theme' effect."""
+    scope = cfg.get("signalrgb", {}).get("effect_scope", "per_game")
+    if scope == "per_game":
+        game = palette.get("game_name") or palette.get("theme_name")
+        if game:
+            return f"{SRGB_EFFECT_TITLE} - {_safe_title_name(game)}"
+    return SRGB_EFFECT_TITLE
+
 # terminal slot order used by Windows Terminal schemes
 _WT_SLOTS = ["black", "red", "green", "yellow", "blue", "purple", "cyan", "white",
              "brightBlack", "brightRed", "brightGreen", "brightYellow",
@@ -89,12 +109,18 @@ def _documents_dir():
 
 
 def write_signalrgb_effect(cfg, palette, log=print):
-    """Write 'Steam Theme.html' in the configured style, skinned with the
-    theme palette. Returns the effect title on success, None otherwise."""
+    """Write the palette-skinned effect file(s) and return the primary title.
+
+    Per-game scope writes 'Steam Theme - <Game>.html' (yours to customize in
+    SignalRGB per game) AND refreshes the shared 'Steam Theme.html' mirror:
+    SignalRGB only discovers new effect files at launch, so the already-known
+    mirror is what gets applied until the per-game file is discovered.
+    """
     import srgb_effects
-    style = cfg.get("signalrgb", {}).get("effect_style", "gradient")
-    html = srgb_effects.render_effect(style, SRGB_EFFECT_TITLE, palette)
-    effects_dir = (cfg.get("signalrgb", {}).get("effects_dir")
+    srgb = cfg.get("signalrgb", {})
+    style = srgb.get("effect_style", "gradient")
+    title = effect_title(cfg, palette)
+    effects_dir = (srgb.get("effects_dir")
                    or os.path.join(_documents_dir(), "WhirlwindFX", "Effects"))
     try:
         os.makedirs(effects_dir, exist_ok=True)
@@ -103,11 +129,18 @@ def write_signalrgb_effect(cfg, palette, log=print):
             if os.path.exists(old):
                 os.remove(old)
                 log(f"  [srgb] removed legacy effect {old}")
-        path = os.path.join(effects_dir, f"{SRGB_EFFECT_TITLE}.html")
+        path = os.path.join(effects_dir, f"{title}.html")
         with open(path, "w", encoding="utf-8") as f:
-            f.write(html)
+            f.write(srgb_effects.render_effect(style, title, palette))
         log(f"  [srgb] wrote custom effect -> {path}")
-        return SRGB_EFFECT_TITLE
+        if title != SRGB_EFFECT_TITLE:
+            # shared mirror, refreshed every game — guaranteed discovered
+            mirror = os.path.join(effects_dir, f"{SRGB_EFFECT_TITLE}.html")
+            with open(mirror, "w", encoding="utf-8") as f:
+                f.write(srgb_effects.render_effect(style, SRGB_EFFECT_TITLE,
+                                                   palette))
+            log(f"  [srgb] refreshed shared mirror -> {mirror}")
+        return title
     except OSError as e:
         log(f"  [srgb] could not write custom effect: {e}")
         return None
@@ -147,14 +180,25 @@ def apply_signalrgb(cfg, palette, log=print):
                         e.get("links", {}).get("apply")) for e in items]
 
             def find(name):
+                # exact match first, then substring ('Steam Theme' must not
+                # accidentally match 'Steam Theme - Some Game')
+                exact = [(n, link) for n, link in effects
+                         if link and n.strip().lower() == name.lower()]
+                if exact:
+                    return exact[0]
                 return next(((n, link) for n, link in effects
                              if link and name.lower() in n.lower()), None)
 
-            # priority: custom palette effect -> named fallback
+            # priority: per-game effect -> shared mirror -> named fallback.
+            # New files are only discovered by SignalRGB at launch, so the
+            # mirror (rewritten every game, discovered long ago) bridges the
+            # gap until the per-game file is registered.
             match = find(custom_title) if custom_title else None
             if custom_title and not match:
-                log(f"  [srgb] custom effect not registered yet — restart SignalRGB "
-                    f"once to discover it; using fallback for now")
+                log(f"  [srgb] '{custom_title}' not registered yet — restart "
+                    f"SignalRGB once to discover it; using the shared mirror "
+                    f"for now")
+                match = find(SRGB_EFFECT_TITLE)
             if not match:
                 match = find(fallback)
             if not match:

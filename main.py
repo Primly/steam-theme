@@ -152,6 +152,7 @@ def run_pipeline(cfg, game, log, dry_run=False):
                                               context=up_ctx, role=role)
     pal["theme_name"] = theme_name
     pal["mood"] = mood
+    pal["game_name"] = name  # per-game SignalRGB effect titles, gallery, etc.
     log(f"  [pal] {pal['appearance']} mode, accent {pal['accent']} "
         f"({pal['accent_grade']}, {pal['accent_contrast']}:1), theme '{theme_name}'")
 

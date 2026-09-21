@@ -253,8 +253,12 @@ name (`SteamWallpaperTheme` / `SteamWallpaperUI`).
 
 Every time the pipeline themes a game, your RGB lighting switches to an
 effect **generated from that game's palette** — not just a static effect you
-picked beforehand. The generated effect appears in SignalRGB's effect list
-as **“Steam Theme”** and is applied automatically.
+picked beforehand. In the default **per-game scope** each game gets its own
+effect in SignalRGB's list — **“Steam Theme - The Witcher 3”**, **“Steam
+Theme - ELDEN RING”**, … — so you can tweak and customize every game's
+lighting individually in SignalRGB, and your tweaks survive because each
+game's file is only rewritten when *that* game's theme regenerates. Prefer
+one shared effect for everything? Set **Effect scope → single** in the UI.
 
 ### Why it works this way
 
@@ -262,9 +266,18 @@ SignalRGB's local REST API can **apply** existing effects and **read** their
 settings, but it cannot **change** an effect's colors — parameter writes are
 silently ignored (verified against the live API). Effects, however, are just
 HTML/JS canvas files ("Lightscripts"). So instead of configuring an existing
-effect, the pipeline **authors one**: it writes `Steam Theme.html`,
-skinned with the current theme palette, into your effects folder, then
-applies it over the API.
+effect, the pipeline **authors one** per game: `Steam Theme - <Game>.html`,
+skinned with that game's palette, written into your effects folder, then
+applied over the API.
+
+**The mirror trick:** SignalRGB only discovers *new* effect files at launch
+(verified: a new file does not appear in its API even after 75 s). So the
+pipeline also refreshes a shared **`Steam Theme.html`** mirror with the same
+palette every run — that file was discovered long ago, so lighting still
+updates live the moment a new game is themed. After your next SignalRGB
+restart, the per-game files are discovered and get applied directly. Net
+effect: no restarts needed for lighting to track games, ever; the restart
+only unlocks the individually-named per-game effects.
 
 ### Requirements & one-time setup
 
@@ -275,13 +288,18 @@ applies it over the API.
 2. **Custom effects folder** — by default `Documents\WhirlwindFX\Effects`.
    If your Documents folder is redirected (e.g. OneDrive), the app finds the
    real path automatically; `signalrgb.effects_dir` overrides it.
-3. **One restart of SignalRGB** after the first run, so it discovers the new
-   `Steam Theme.html` file. (SignalRGB only scans the effects folder at
+3. **One restart of SignalRGB** after the first run, so it discovers the
+   `Steam Theme.html` mirror. (SignalRGB only scans the effects folder at
    launch.) After that, every game update is applied live — no restarts.
+   Restarting SignalRGB at any later point additionally discovers the
+   per-game `Steam Theme - <Game>` effects that accumulated meanwhile.
 4. Enable **SignalRGB lighting sync** in the Extras section of the config UI.
 
-You can verify discovery any time in SignalRGB: the effect appears under
-Lighting Effects as “Steam Theme” (publisher: SteamTheme).
+You can verify discovery any time in SignalRGB: effects appear under
+Lighting Effects as “Steam Theme - …” (publisher: SteamTheme). Per-game
+effect files accumulate as you play more games — delete any you don't want
+from `Documents\WhirlwindFX\Effects`; they'll only be recreated if you play
+that game again.
 
 ### Effect styles
 
@@ -305,12 +323,11 @@ theme applies.
 
 ### Fallback effect
 
-If the custom effect can't be applied (e.g. first run before the discovery
-restart), the pipeline falls back to the stock effect named in
-`signalrgb.fallback_effect` (default `"Solid Color"`). Set
-`custom_effect: false` to skip generation entirely and always apply that
+Apply order is: **per-game effect** → **shared `Steam Theme` mirror** → the
+stock effect named in `signalrgb.fallback_effect` (default `"Solid Color"`).
+Set `custom_effect: false` to skip generation entirely and always apply that
 named effect instead — useful if you'd rather keep a stock Pro effect (say,
-an audio visualizer) than the generated one.
+an audio visualizer) than the generated ones.
 
 ### Keypress-reactive (keytap) layer
 

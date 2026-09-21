@@ -291,6 +291,13 @@
     <div class="switch"><input type="checkbox" id="srgbCustom"><span>Generate palette-skinned effect</span></div>
   </div>
   <div class="row">
+    <label for="srgbScope">Effect scope</label>
+    <select id="srgbScope">
+      <option value="per_game">One effect per game — customize each in SignalRGB</option>
+      <option value="single">Single shared effect — rewritten every game</option>
+    </select>
+  </div>
+  <div class="row">
     <label for="srgbStyle">Effect style</label>
     <select id="srgbStyle">
       <option value="gradient">Gradient Sweep (direction selectable)</option>
@@ -506,6 +513,7 @@ async function load() {
   const sg = cfg.signalrgb || {};
   setC("srgbEnabled", sg.enabled); setC("srgbCustom", sg.custom_effect !== false);
   setV("srgbStyle", sg.effect_style || "gradient"); setV("srgbBase", sg.base_url || "http://localhost:16038");
+  setV("srgbScope", sg.effect_scope || "per_game");
   setV("srgbFallback", sg.fallback_effect || (sg.effect_map || {}).default || "Solid Color");
   renderMonitors();
   loadMonitors();
@@ -550,7 +558,8 @@ async function save(apply) {
     background_opacity: parseFloat(v("wtOpacity")) || 0.25};
   cfg.signalrgb = {enabled: document.getElementById("srgbEnabled").checked, base_url: v("srgbBase"),
                    custom_effect: document.getElementById("srgbCustom").checked,
-                   effect_style: v("srgbStyle"), fallback_effect: v("srgbFallback") || "Solid Color"};
+                   effect_style: v("srgbStyle"), effect_scope: v("srgbScope"),
+                   fallback_effect: v("srgbFallback") || "Solid Color"};
   const mons = [];
   document.querySelectorAll("[data-mon]").forEach(el => {
     const i = +el.dataset.mon;
