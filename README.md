@@ -94,6 +94,10 @@ commands go in **PowerShell** (Start menu → type `PowerShell` → Enter).
 **Updating later:** with Option A, run `git pull` inside the project folder.
 With Option B, download a fresh ZIP.
 
+**Contributing:** the `main` branch is protected — outside changes come
+through pull requests and must pass the CI test suite before they can be
+merged.
+
 ### 3. Install the dependencies
 
 From the project folder:
