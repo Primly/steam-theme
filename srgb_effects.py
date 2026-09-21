@@ -5,14 +5,21 @@ format: meta properties in <head>, canvas in <body>, animation in <script>).
 The palette colors are baked in as color-picker defaults (color1/color2/
 color3), so the user can still tweak them in the SignalRGB UI between games.
 
-Note: true per-keypress (keytap) effects are stock Pro effects; SignalRGB
-publishes no lightscript input hook. "Ripple" here is an ambient ripple.
+Keypress reactivity: SignalRGB calls a lightscript's global
+`onCanvasTapped(x, y)` (coordinates in the 320x200 canvas space, mapped from
+the physical key position) whenever a key is pressed on a device with per-key
+LED positions. This is the same hook the first-party "WhirlwindFX"/"SignalRGB"
+publisher effects use (e.g. Neon Sunset, Dark Matter, Ripples). Every style
+below layers palette-colored tap rings (a radial flash for Solid) on top of
+its ambient animation, gated by a "Keypress Effects" toggle. Keytap input is
+a SignalRGB Pro feature and only fires on key-mapped devices (keyboards);
+other devices simply keep playing the ambient part.
 """
 
 STYLES = {
     "gradient": "Gradient Sweep (palette gradient scrolling in a chosen direction)",
     "pulse":    "Pulse (accent glow breathing from the center)",
-    "ripple":   "Ripple (ambient expanding rings on a dark base)",
+    "ripple":   "Ripple (ambient expanding rings + keypress ripples)",
     "rain":     "Rain (palette streaks falling on near-black)",
     "comet":    "Comet (bright accent bar sweeping with a palette trail)",
     "solid":    "Solid (flat accent, optional breathing)",
@@ -26,6 +33,7 @@ _HEAD = """<head>
   <meta property="color2" label="Palette 2" type="color" min="0" max="360" default="{c2}"/>
   <meta property="color3" label="Palette 3" type="color" min="0" max="360" default="{c3}"/>
   <meta property="speed" label="Speed" type="number" min="1" max="10" default="4"/>
+  <meta property="tapEffects" label="Keypress Effects" type="boolean" default="1"/>
 {extra_meta}</head>
 <body style="margin: 0; padding: 0;">
   <canvas id="exCanvas" width="320" height="200"></canvas>
@@ -55,6 +63,34 @@ _BOOT = """
   function oncolor1Changed() { C1 = hexToRgb(color1); PAL[0] = C1; }
   function oncolor2Changed() { C2 = hexToRgb(color2); PAL[1] = C2; }
   function oncolor3Changed() { C3 = hexToRgb(color3); PAL[2] = C3; }
+
+  // --- keypress layer -------------------------------------------------------
+  // SignalRGB calls onCanvasTapped(x, y) in 320x200 canvas coordinates when a
+  // key is pressed on a key-mapped device (Pro feature). Each style draws its
+  // ambient frame first, then calls drawTaps() so taps always sit on top.
+  var taps = [];
+  function onCanvasTapped(x, y) {
+    if (typeof tapEffects !== "undefined" && !tapEffects) return;
+    taps.push({x: x, y: y, r: 2, life: 1.0});
+  }
+  function drawTaps() {  // double ring, like the stock ripple keytap effects
+    for (var i = taps.length - 1; i >= 0; i--) {
+      var tp = taps[i];
+      tp.r += 1.5 + speed / 3;
+      tp.life -= 0.02;
+      if (tp.life <= 0) { taps.splice(i, 1); continue; }
+      ctx.beginPath();
+      ctx.strokeStyle = rgbStr(C1, tp.life);
+      ctx.lineWidth = 7;
+      ctx.arc(tp.x, tp.y, tp.r, 0, 2 * Math.PI);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.strokeStyle = rgbStr(C2, tp.life * 0.8);
+      ctx.lineWidth = 4;
+      ctx.arc(tp.x, tp.y, tp.r * 0.7, 0, 2 * Math.PI);
+      ctx.stroke();
+    }
+  }
 """
 
 
@@ -66,12 +102,29 @@ def _page(title, c1, c2, c3, extra_meta, body_js):
 def _solid(title, c1, c2, c3):
     meta = '  <meta property="breathe" label="Breathing" type="boolean" default="0"/>'
     js = """
+  // a radial flash reads better than rings on a flat accent base
+  drawTaps = function () {
+    for (var i = taps.length - 1; i >= 0; i--) {
+      var tp = taps[i];
+      tp.r += 2 + speed / 2;
+      tp.life -= 0.04;
+      if (tp.life <= 0) { taps.splice(i, 1); continue; }
+      var g = ctx.createRadialGradient(tp.x, tp.y, 1, tp.x, tp.y, tp.r);
+      g.addColorStop(0, rgbStr(C2, tp.life * 0.9));
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(tp.x, tp.y, tp.r, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  };
   var t = 0;
   function update() {
     var a = 1;
     if (breathe) { t += speed / 200; a = Math.sin(t) * 0.35 + 0.65; }
     ctx.fillStyle = rgbStr(C1, a);
     ctx.fillRect(0, 0, W, H);
+    drawTaps();
     window.requestAnimationFrame(update);
   }
   update();
@@ -97,6 +150,7 @@ def _gradient(title, c1, c2, c3):
       ctx.fillStyle = rgbStr(col);
       if (horizontal) ctx.fillRect(i, 0, 1, H); else ctx.fillRect(0, i, W, 1);
     }
+    drawTaps();
     window.requestAnimationFrame(update);
   }
   update();
@@ -118,6 +172,7 @@ def _pulse(title, c1, c2, c3):
     g.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
+    drawTaps();
     window.requestAnimationFrame(update);
   }
   update();
@@ -126,14 +181,15 @@ def _pulse(title, c1, c2, c3):
 
 
 def _ripple(title, c1, c2, c3):
-    meta = '  <meta property="base" label="Base color" type="color" min="0" max="360" default="#0A0A0E"/>'
+    meta = ('  <meta property="ambient" label="Ambient ripples" type="boolean" default="1"/>\n'
+            '  <meta property="base" label="Base color" type="color" min="0" max="360" default="#0A0A0E"/>')
     js = """
   var ripples = [], frame = 0;
   function update() {
     frame++;
     ctx.fillStyle = (typeof base !== "undefined") ? base : "#0A0A0E";
     ctx.fillRect(0, 0, W, H);
-    if (frame % Math.max(10, 60 - speed * 5) === 0) {
+    if (ambient && frame % Math.max(10, 60 - speed * 5) === 0) {
       ripples.push({x: Math.random()*W, y: Math.random()*H, r: 4, life: 1, col: PAL[frame % PAL.length]});
     }
     for (var i = ripples.length - 1; i >= 0; i--) {
@@ -146,6 +202,7 @@ def _ripple(title, c1, c2, c3):
       ctx.arc(rp.x, rp.y, rp.r, 0, 2 * Math.PI);
       ctx.stroke();
     }
+    drawTaps();
     window.requestAnimationFrame(update);
   }
   update();
@@ -170,6 +227,7 @@ def _rain(title, c1, c2, c3):
       ctx.fillStyle = rgbStr(d.col, 0.9);
       ctx.fillRect(d.x, d.y - d.len, 2, d.len);
     }
+    drawTaps();
     window.requestAnimationFrame(update);
   }
   update();
@@ -191,6 +249,7 @@ def _comet(title, c1, c2, c3):
     g.addColorStop(1, rgbStr(C1, 1));
     ctx.fillStyle = g;
     ctx.fillRect(x - 60, 0, 60, H);
+    drawTaps();
     window.requestAnimationFrame(update);
   }
   update();

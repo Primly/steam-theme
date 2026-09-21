@@ -172,15 +172,29 @@ restart), the pipeline falls back to: **mood-mapped effect**
 "neon cyberpunk") → **`default` effect**. Set `custom_effect: false` to skip
 generation entirely and always use the mood map.
 
-### About keypress-reactive (keytap) effects
+### Keypress-reactive (keytap) layer
 
-True per-key reactive effects (ripples on keypress, heatmaps, etc.) are
-stock **SignalRGB Pro** effects — SignalRGB publishes no Lightscript API for
-keyboard input, so community effects can't react to individual keys. Our
-`ripple` style is an *ambient* ripple. If you want keytap reactivity, set
-`custom_effect: false` and map a mood to a stock keytap effect (e.g.
-`"default": "Ripple"`) — you keep reactivity, at the cost of palette
-skinning.
+Every generated style includes a **keypress layer**: SignalRGB calls a
+lightscript's global `onCanvasTapped(x, y)` function — coordinates in the
+320×200 canvas space, mapped from the physical key position — whenever a key
+is pressed on a key-mapped device. (This is the same hook SignalRGB's own
+first-party effects like *Neon Sunset* and *Ripples* use.) Our effects answer
+with palette-colored rings radiating from the pressed key — a radial flash
+for the `solid` style — layered on top of the ambient animation. Toggle it
+per effect on SignalRGB's Customize page with the **Keypress Effects**
+switch; the `ripple` style also has an **Ambient ripples** switch if you
+want keypress rings only.
+
+Requirements:
+
+- **SignalRGB Pro** — keytap input is a Pro feature. Without Pro the ambient
+  animation still plays; the keypress layer just never fires.
+- A **keyboard or keypad** device with an LED layout. Strips, fans, etc. have
+  no key positions, so they simply keep playing the ambient part.
+
+If you'd rather use a stock Pro keytap effect instead, set
+`custom_effect: false` and map a mood to it (e.g. `"default": "Ripple"`) —
+you keep reactivity, at the cost of palette skinning.
 
 ## Gotchas
 

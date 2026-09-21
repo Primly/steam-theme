@@ -270,7 +270,7 @@
     <select id="srgbStyle">
       <option value="gradient">Gradient Sweep (direction selectable)</option>
       <option value="pulse">Pulse</option>
-      <option value="ripple">Ripple (ambient)</option>
+      <option value="ripple">Ripple (ambient + keypress)</option>
       <option value="rain">Rain</option>
       <option value="comet">Comet</option>
       <option value="solid">Solid</option>
@@ -278,6 +278,7 @@
     <label for="srgbBase" style="min-width:0">API URL</label>
     <input id="srgbBase" type="text" style="max-width:200px">
   </div>
+  <p class="hint">All generated styles include a keypress layer (rings flash from the pressed key) — toggleable per effect in SignalRGB's Customize page. Keypress input needs SignalRGB Pro and a keyboard/keypad device.</p>
   <div class="row">
     <label for="srgbMap" class="top">SignalRGB mood → effect map (JSON)</label>
     <textarea id="srgbMap"></textarea>
