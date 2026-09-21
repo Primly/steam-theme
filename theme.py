@@ -171,6 +171,84 @@ def compose_wallpaper(monitors, art, out_path, log=print):
     return out_path
 
 
+# ------------------------------------------------- original-look snapshot
+
+_BACKUP_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "windows_backup.json")
+
+
+def _reg_get(root, path, name):
+    try:
+        with winreg.OpenKey(root, path) as k:
+            return winreg.QueryValueEx(k, name)[0]
+    except OSError:
+        return None
+
+
+def snapshot_windows_look(log=print):
+    """Save the user's current wallpaper + colors once, before the first
+    theme apply, so restore_windows_look() can undo the app later. Never
+    overwrites an existing snapshot (that would capture one of OUR themes)."""
+    if os.path.exists(_BACKUP_PATH):
+        return
+    import json
+    snap = {
+        "dwm": {n: _reg_get(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\DWM", n)
+                for n in ("AccentColor", "AccentColorInactive",
+                          "ColorPrevalence", "EnableWindowColorization")},
+        "personalize": {n: _reg_get(winreg.HKEY_CURRENT_USER,
+                                    r"Software\Microsoft\Windows\CurrentVersion"
+                                    r"\Themes\Personalize", n)
+                        for n in ("AppsUseLightTheme", "SystemUsesLightTheme",
+                                  "ColorPrevalence")},
+        "desktop": {n: _reg_get(winreg.HKEY_CURRENT_USER,
+                                r"Control Panel\Desktop", n)
+                    for n in ("Wallpaper", "WallpaperStyle", "TileWallpaper")},
+    }
+    try:
+        with open(_BACKUP_PATH, "w", encoding="utf-8") as f:
+            json.dump(snap, f, indent=2)
+        log("  [backup] snapshot of the previous Windows look saved "
+            "(windows_backup.json)")
+    except OSError as e:
+        log(f"  [backup] snapshot failed (restore unavailable): {e}")
+
+
+def restore_windows_look(log=print):
+    """Write the snapshot back: registry colors/modes + original wallpaper."""
+    import json
+    with open(_BACKUP_PATH, encoding="utf-8") as f:
+        snap = json.load(f)
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
+                          r"Software\Microsoft\Windows\DWM") as k:
+        for n, v in snap.get("dwm", {}).items():
+            if v is not None:
+                winreg.SetValueEx(k, n, 0, winreg.REG_DWORD, int(v))
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
+                          r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
+        for n, v in snap.get("personalize", {}).items():
+            if v is not None:
+                winreg.SetValueEx(k, n, 0, winreg.REG_DWORD, int(v))
+    desktop = snap.get("desktop", {})
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
+                          r"Control Panel\Desktop") as k:
+        for n in ("WallpaperStyle", "TileWallpaper"):
+            if desktop.get(n) is not None:
+                winreg.SetValueEx(k, n, 0, winreg.REG_SZ, str(desktop[n]))
+    wallpaper = desktop.get("Wallpaper")
+    if wallpaper and os.path.exists(wallpaper):
+        # SPI_SETDESKWALLPAPER=20, SPIF_UPDATEINIFILE|SPIF_SENDCHANGE=3
+        ctypes.windll.user32.SystemParametersInfoW(20, 0, wallpaper, 3)
+    HWND_BROADCAST, WM_SETTINGCHANGE = 0xFFFF, 0x001A
+    SMTO_ABORTIFHUNG = 0x0002
+    result = ctypes.c_ulong()
+    ctypes.windll.user32.SendMessageTimeoutW(
+        HWND_BROADCAST, WM_SETTINGCHANGE, 0, "ImmersiveColorSet",
+        SMTO_ABORTIFHUNG, 500, ctypes.byref(result))
+    log("  [restore] previous Windows look restored")
+
+
 # ----------------------------------------------------------- registry colors
 
 def _hex_to_abgr(hexcolor):

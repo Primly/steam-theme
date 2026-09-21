@@ -56,11 +56,21 @@
   #saveState { color: var(--dim); font-size: 13px; }
   .sub { margin: 18px 0 6px; font-size: 13px; color: var(--text); font-weight: 600; }
   a { color: var(--accent); }
+  code { background: var(--panel2); border-radius: 4px; padding: 1px 5px; font-size: 12px; }
+  #gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+  .card { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+          overflow: hidden; display: flex; flex-direction: column; }
+  .card.current { outline: 2px solid var(--accent); }
+  .card img { width: 100%; height: 92px; object-fit: cover; display: block; background: #0b0b0e; }
+  .card .cname { padding: 8px 10px 2px; font-size: 12.5px; }
+  .card .cdetail { padding: 0 10px 4px; font-size: 11.5px; color: var(--dim); }
+  .card button { margin: auto 10px 10px; }
+  #ver { margin-left: auto; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Steam Theme</h1><span>configuration</span>
+  <h1>Steam Theme</h1><span>configuration</span><span id="ver"></span>
 </header>
 <main>
 
@@ -71,6 +81,7 @@
     <button onclick="redo('reapply')" title="Re-applies the saved .theme file; no regeneration, no API calls, no credits">Re-apply</button>
     <button onclick="redo('regenerate')" title="New VLM name + palette + wallpaper composite; reuses cached art and upscales (no credits)">Regenerate</button>
     <button onclick="refetch()" title="Deletes cached art + upscales and re-creates everything">Full refetch</button>
+    <button onclick="restoreLook()" title="Restores the wallpaper, accent color, and light/dark modes Windows had before Steam Theme first ran">Restore Windows look</button>
     <span class="hint" style="margin:0">Full refetch re-runs upscaling — may use Topaz credits.</span>
   </div>
 </section>
@@ -117,6 +128,20 @@
   <div class="row">
     <label for="excludes" class="top">Excluded app IDs</label>
     <input id="excludes" type="text" placeholder="431960, 250820">
+  </div>
+  <div class="row">
+    <div class="switch"><input type="checkbox" id="nowPlaying"><span>Theme games the moment they launch (now playing)</span></div>
+  </div>
+</section>
+
+<section>
+  <h2>Non-Steam games</h2>
+  <p class="hint">Theme games launched outside Steam (Epic, GOG, emulators) by watching for their process. One per line:
+    <code>process.exe | appid (optional) | display name (optional)</code>.
+    An appid gets proper Steam/SteamGridDB art; without one, art comes from a SteamGridDB/wallhaven name search.</p>
+  <div class="row">
+    <label for="customGames" class="top">Process watch list</label>
+    <textarea id="customGames" placeholder="eldenring.exe | 1245620 | ELDEN RING&#10;retroarch.exe | | RetroArch"></textarea>
   </div>
 </section>
 
@@ -294,6 +319,12 @@
 </section>
 
 <section>
+  <h2>Theme gallery</h2>
+  <p class="hint">Every game theme in the local cache. Re-apply one instantly — no API calls, no Topaz credits.</p>
+  <div id="gallery"></div>
+</section>
+
+<section>
   <h2>Activity log</h2>
   <div id="log">(loading…)</div>
 </section>
@@ -454,6 +485,10 @@ async function load() {
   setV("paletteMode", cfg.palette_mode || "colorful");
   setV("poll", cfg.poll_interval_seconds ?? 30);
   setV("excludes", (cfg.exclude_appids || []).join(", "));
+  setC("nowPlaying", cfg.now_playing !== false);
+  setV("customGames", (cfg.custom_games || [])
+    .map(e => [e.process, e.appid ?? "", e.name ?? ""].join(" | ").replace(/(\s*\|\s*)+$/, ""))
+    .join("\n"));
   setV("steamKey", cfg.steam_api_key); setV("steamId", cfg.steam_id64);
   setV("sgdbKey", cfg.steamgriddb_api_key); setV("whKey", cfg.wallhaven_api_key);
   const ai = cfg.ai || cfg.vlm || {};
@@ -475,6 +510,7 @@ async function load() {
   renderMonitors();
   loadMonitors();
   loadState();
+  loadGallery();
   refreshLog();
   setInterval(refreshLog, 5000);
 }
@@ -486,6 +522,15 @@ async function save(apply) {
   cfg.palette_mode = v("paletteMode");
   cfg.poll_interval_seconds = parseInt(v("poll")) || 30;
   cfg.exclude_appids = v("excludes").split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+  cfg.now_playing = document.getElementById("nowPlaying").checked;
+  cfg.custom_games = document.getElementById("customGames").value.split("\n")
+    .map(l => l.trim()).filter(Boolean).map(l => {
+      const parts = l.split("|").map(s => s.trim());
+      const e = {process: parts[0]};
+      if (parts[1] && !isNaN(parseInt(parts[1]))) e.appid = parseInt(parts[1]);
+      if (parts[2]) e.name = parts[2];
+      return e;
+    });
   cfg.steam_api_key = v("steamKey"); cfg.steam_id64 = v("steamId");
   cfg.steamgriddb_api_key = v("sgdbKey"); cfg.wallhaven_api_key = v("whKey");
   cfg.ai = {enabled: document.getElementById("aiEnabled").checked,
@@ -529,6 +574,7 @@ async function redo(mode) {
   document.getElementById("saveState").textContent = r.detail || "";
   setTimeout(refreshLog, 3000);
   setTimeout(loadState, 6000);
+  setTimeout(loadGallery, 8000);
 }
 
 function refetch() {
@@ -539,9 +585,52 @@ function refetch() {
 async function loadState() {
   const s = await api("/api/state");
   const el = document.getElementById("curTheme");
-  el.textContent = s.last_appid
-    ? `${s.last_name} (${s.last_appid}) — theme “${s.theme_name || "unnamed"}”`
+  el.textContent = (s.last_appid || s.last_cache_key)
+    ? `${s.last_name} (${s.last_appid || s.last_cache_key}) — theme “${s.theme_name || "unnamed"}”`
     : "no theme applied yet";
+  document.getElementById("ver").textContent = s.version ? "v" + s.version : "";
+}
+
+async function restoreLook() {
+  if (!confirm("Restore the wallpaper, accent color, and light/dark modes Windows had before Steam Theme first ran?"))
+    return;
+  const r = await api("/api/restore", {});
+  document.getElementById("saveState").textContent = r.detail || "";
+  setTimeout(refreshLog, 2000);
+}
+
+async function loadGallery() {
+  const r = await api("/api/gallery");
+  const g = document.getElementById("gallery");
+  g.textContent = "";
+  for (const t of r.themes || []) {
+    const card = document.createElement("div");
+    card.className = "card" + (t.current ? " current" : "");
+    if (t.has_art) {
+      const img = document.createElement("img");
+      img.src = "/api/art?key=" + encodeURIComponent(t.key);
+      img.loading = "lazy"; img.alt = t.theme_name || t.key;
+      card.appendChild(img);
+    }
+    const nm = document.createElement("div");
+    nm.className = "cname"; nm.textContent = t.theme_name || t.key;
+    const dt = document.createElement("div");
+    dt.className = "cdetail"; dt.textContent = `${t.appearance || "?"} · accent ${t.accent || "?"}`;
+    const btn = document.createElement("button");
+    btn.textContent = t.current ? "Current theme" : "Apply this theme";
+    btn.disabled = !!t.current;
+    btn.onclick = async () => {
+      btn.disabled = true;
+      const rr = await api("/api/apply-theme", {key: t.key});
+      document.getElementById("saveState").textContent = rr.detail || "";
+      setTimeout(refreshLog, 2500);
+      setTimeout(() => { loadState(); loadGallery(); }, 6000);
+    };
+    card.append(nm, dt, btn);
+    g.appendChild(card);
+  }
+  if (!g.children.length)
+    g.textContent = "(no cached themes yet — run the pipeline once)";
 }
 
 async function refreshLog() {

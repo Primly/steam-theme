@@ -158,6 +158,38 @@ def test_topaz(body):
 TESTS = {"steam": test_steam, "sgdb": test_sgdb, "ai": test_ai, "topaz": test_topaz}
 
 
+def _gallery():
+    """Every cached game theme, for the UI gallery."""
+    import main as app
+    cfg = app.load_config()
+    root = app.cfg_path(cfg, "cache_dir", "cache")
+    items = []
+    try:
+        entries = sorted(os.listdir(root))
+    except OSError:
+        return items
+    state = app.load_state(cfg)
+    current = str(state.get("last_cache_key") or state.get("last_appid") or "")
+    for entry in entries:
+        folder = app.safe_join(root, entry)
+        if not os.path.isdir(folder):
+            continue
+        try:
+            with open(os.path.join(folder, "palette.json"), encoding="utf-8") as f:
+                p = json.load(f)
+        except (OSError, ValueError):
+            continue
+        items.append({
+            "key": entry,
+            "theme_name": p.get("theme_name") or entry,
+            "accent": p.get("accent"),
+            "appearance": p.get("appearance"),
+            "has_art": os.path.exists(os.path.join(folder, "hero.jpg")),
+            "current": entry == current,
+        })
+    return items
+
+
 # -------------------------------------------------------------------- server
 
 class Handler(BaseHTTPRequestHandler):
@@ -252,15 +284,35 @@ class Handler(BaseHTTPRequestHandler):
             import main as app
             cfg = app.load_config()
             state = app.load_state(cfg)
+            state["version"] = app.__version__
             state["theme_name"] = None
+            cache_key = str(state.get("last_cache_key")
+                            or state.get("last_appid") or "")
             try:
                 pal = app.safe_join(app.cfg_path(cfg, "cache_dir", "cache"),
-                                    str(state.get("last_appid") or ""), "palette.json")
+                                    cache_key, "palette.json")
                 with open(pal, encoding="utf-8") as f:
                     state["theme_name"] = json.load(f).get("theme_name")
             except (OSError, ValueError, json.JSONDecodeError):
                 pass
             self._send(200, state)
+        elif path == "/api/gallery":
+            self._send(200, {"ok": True, "themes": _gallery()})
+        elif path == "/api/art":
+            import main as app
+            q = parse_qs(urlparse(self.path).query)
+            key, role = q.get("key", [""])[0], q.get("role", ["hero"])[0]
+            if role not in ("hero", "logo", "icon"):
+                self._send(400, {"error": "bad role"})
+                return
+            try:
+                img = app.safe_join(app.cfg_path(load_config(), "cache_dir", "cache"),
+                                    key, f"{role}.jpg")
+                with open(img, "rb") as f:
+                    data = f.read()
+                self._send(200, content_type="image/jpeg", raw=data)
+            except (OSError, ValueError):
+                self._send(404, {"error": "no art"})
         elif path == "/api/log":
             import main as app
             try:
@@ -316,22 +368,51 @@ class Handler(BaseHTTPRequestHandler):
                 cfg = app.load_config()
                 log = app._log_factory(cfg)
                 state = app.load_state(cfg)
-                appid = state.get("last_appid")
+                cache_key = str(state.get("last_cache_key")
+                                or state.get("last_appid") or "")
                 try:
                     if mode == "reapply":
                         app.reapply(cfg, log)
                         return
-                    if mode == "refetch" and appid:
+                    if mode == "refetch" and cache_key:
                         target = app.safe_join(
-                            app.cfg_path(cfg, "cache_dir", "cache"), str(appid))
+                            app.cfg_path(cfg, "cache_dir", "cache"), cache_key)
                         shutil.rmtree(target, ignore_errors=True)
-                        log(f"redo: cleared cache for appid {appid} "
+                        log(f"redo: cleared cache for {cache_key} "
                             "(art + upscales will be re-created)")
                     app.check_once(cfg, log, force=True)
                 except Exception as e:
                     log(f"redo error: {e}")
             threading.Thread(target=work, daemon=True).start()
             self._send(200, {"ok": True, "detail": f"{mode} started; watch the log"})
+        elif path == "/api/apply-theme":
+            key = str(body.get("key") or "")
+
+            def work():
+                import main as app
+                cfg = app.load_config()
+                log = app._log_factory(cfg)
+                try:
+                    app.reapply_from_cache(cfg, log, key)
+                except Exception as e:
+                    log(f"gallery apply error: {e}")
+            threading.Thread(target=work, daemon=True).start()
+            self._send(200, {"ok": True, "detail": f"applying '{key}'; watch the log"})
+        elif path == "/api/restore":
+            def work():
+                import main as app
+                import theme as theme_mod
+                log = app._log_factory(app.load_config())
+                try:
+                    theme_mod.restore_windows_look(log)
+                except FileNotFoundError:
+                    log("restore: no snapshot found "
+                        "(windows_backup.json missing — nothing was ever applied?)")
+                except Exception as e:
+                    log(f"restore error: {e}")
+            threading.Thread(target=work, daemon=True).start()
+            self._send(200, {"ok": True,
+                             "detail": "restoring previous Windows look; watch the log"})
         elif path == "/api/run-now":
             def work():
                 import main as app

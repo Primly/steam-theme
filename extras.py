@@ -121,6 +121,8 @@ def apply_signalrgb(cfg, palette, log=print):
     srgb = cfg.get("signalrgb", {})
     if not srgb.get("enabled"):
         return
+    import time
+
     import requests
     base = srgb.get("base_url", "http://localhost:16038").rstrip("/")
     # fallback_effect replaced the old mood->effect map; honor its "default"
@@ -132,31 +134,41 @@ def apply_signalrgb(cfg, palette, log=print):
     custom_title = None
     if srgb.get("custom_effect", True):
         custom_title = write_signalrgb_effect(cfg, palette, log)
-    try:
-        r = requests.get(f"{base}/api/v1/lighting/effects", timeout=5)
-        r.raise_for_status()
-        items = r.json().get("data", {}).get("items", [])
-        effects = [(e.get("attributes", {}).get("name", ""),
-                    e.get("links", {}).get("apply")) for e in items]
 
-        def find(name):
-            return next(((n, link) for n, link in effects
-                         if link and name.lower() in n.lower()), None)
+    # SignalRGB can still be starting up when the pipeline fires (logon race);
+    # retry with backoff before giving up
+    attempts = int(srgb.get("retry_attempts", 3))
+    for attempt in range(1, attempts + 1):
+        try:
+            r = requests.get(f"{base}/api/v1/lighting/effects", timeout=5)
+            r.raise_for_status()
+            items = r.json().get("data", {}).get("items", [])
+            effects = [(e.get("attributes", {}).get("name", ""),
+                        e.get("links", {}).get("apply")) for e in items]
 
-        # priority: custom palette effect -> named fallback
-        match = find(custom_title) if custom_title else None
-        if custom_title and not match:
-            log(f"  [srgb] custom effect not registered yet — restart SignalRGB "
-                f"once to discover it; using fallback for now")
-        if not match:
-            match = find(fallback)
-        if not match:
-            log(f"  [srgb] fallback effect {fallback!r} not installed")
-            log(f"  [srgb] no usable effect; available: {[n for n, _ in effects][:8]}")
+            def find(name):
+                return next(((n, link) for n, link in effects
+                             if link and name.lower() in n.lower()), None)
+
+            # priority: custom palette effect -> named fallback
+            match = find(custom_title) if custom_title else None
+            if custom_title and not match:
+                log(f"  [srgb] custom effect not registered yet — restart SignalRGB "
+                    f"once to discover it; using fallback for now")
+            if not match:
+                match = find(fallback)
+            if not match:
+                log(f"  [srgb] fallback effect {fallback!r} not installed")
+                log(f"  [srgb] no usable effect; available: {[n for n, _ in effects][:8]}")
+                return
+            name, apply_link = match
+            ra = requests.post(base + apply_link, timeout=5)
+            ra.raise_for_status()
+            log(f"  [srgb] applied effect '{name}'")
             return
-        name, apply_link = match
-        ra = requests.post(base + apply_link, timeout=5)
-        ra.raise_for_status()
-        log(f"  [srgb] applied effect '{name}'")
-    except Exception as e:
-        log(f"  [srgb] SignalRGB not reachable or API mismatch: {e}")
+        except Exception as e:
+            if attempt < attempts:
+                log(f"  [srgb] attempt {attempt}/{attempts} failed ({e}); retrying")
+                time.sleep(2 * attempt)
+            else:
+                log(f"  [srgb] SignalRGB not reachable or API mismatch: {e}")

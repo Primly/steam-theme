@@ -2,6 +2,7 @@
 config.json
 state.json
 service.log
+windows_backup.json
 
 # generated wallpapers/themes (large, machine-specific)
 cache/

@@ -6,6 +6,10 @@
   "wallhaven_api_key": "",
 
   "poll_interval_seconds": 30,
+  "now_playing": true,
+  "custom_games": [
+    { "process": "game.exe", "appid": 0, "name": "Example — delete me" }
+  ],
 
   "palette_mode": "colorful",
   "appearance_preference": "dark",

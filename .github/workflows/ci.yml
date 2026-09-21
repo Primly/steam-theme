@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # Windows runner: the app imports winreg/ctypes Windows APIs at module load
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Compile check
+        run: python -m py_compile main.py webui.py theme.py extras.py artwork.py upscale.py palette.py steamdetect.py srgb_effects.py
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v

@@ -16,6 +16,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -28,6 +29,7 @@ import theme as theme_mod
 import upscale
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+__version__ = "1.0.0"
 
 
 def safe_join(base, *parts):
@@ -99,15 +101,17 @@ def save_state(cfg, state):
 
 
 def run_pipeline(cfg, game, log, dry_run=False):
-    appid, name = game["appid"], game["name"]
+    appid, name = game.get("appid"), game["name"]
+    # custom (non-Steam) games may have no appid; cache under a stable key
+    cache_key = game.get("cache_key") or str(appid)
     cache_root = cfg_path(cfg, "cache_dir", "cache")
-    cache = safe_join(cache_root, str(appid))
-    log(f"pipeline: {name} ({appid})")
+    cache = safe_join(cache_root, cache_key)
+    log(f"pipeline: {name} ({appid or cache_key})")
 
-    # Stage 2 — art (cached per appid)
+    # Stage 2 — art (cached per game)
     art = artwork.fetch_artwork(appid, name, game.get("icon_url"),
                                 {**cfg, "cache_dir": cache_root},
-                                log)
+                                log, cache_key=cache_key)
     if not art:
         log("  !! no artwork found at all; aborting")
         return None
@@ -176,6 +180,8 @@ def run_pipeline(cfg, game, log, dry_run=False):
         log("  [dry-run] skipping registry writes, theme apply, and extras")
         return {"theme_path": theme_path, "palette": pal, "wallpaper": wallpaper}
 
+    # snapshot the pre-app Windows look once so 'Restore' can undo us later
+    theme_mod.snapshot_windows_look(log)
     sys_mode = cfg.get("system_mode", "match")
     app_mode = cfg.get("app_mode", "match")
     theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
@@ -215,40 +221,126 @@ def reapply(cfg, log):
         theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
 
 
+def reapply_from_cache(cfg, log, cache_key):
+    """Re-apply a theme straight from its cache folder (theme gallery)."""
+    cache = safe_join(cfg_path(cfg, "cache_dir", "cache"), cache_key)
+    theme_path = os.path.join(cache, "theme.theme")
+    if not os.path.exists(theme_path):
+        raise FileNotFoundError(f"no cached theme for {cache_key!r}")
+    with open(os.path.join(cache, "palette.json"), encoding="utf-8") as f:
+        pal = json.load(f)
+    log(f"gallery: re-applying '{pal.get('theme_name') or cache_key}'")
+    sys_mode = cfg.get("system_mode", "match")
+    app_mode = cfg.get("app_mode", "match")
+    theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
+    theme_mod.apply_theme(theme_path, log)
+    time.sleep(3)
+    theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
+    extras.apply_windows_terminal(cfg, pal, pal.get("theme_name") or cache_key,
+                                  pal.get("wallpaper"), log)
+    extras.apply_signalrgb(cfg, pal, log)
+    # point state at this theme; identity = cache key so the poller doesn't
+    # immediately undo the manual choice
+    state = load_state(cfg)
+    state.update({"theme_path": theme_path, "last_cache_key": cache_key,
+                  "last_identity": cache_key,
+                  "last_name": pal.get("theme_name") or cache_key})
+    try:
+        state["last_appid"] = int(cache_key)
+    except ValueError:
+        pass
+    save_state(cfg, state)
+
+
 def check_once(cfg, log, force=False, appid_override=None, dry_run=False):
+    """Detection priority: custom (non-Steam) process > Steam now-playing >
+    Steam last-played. Theming is keyed per game ('identity'), so replaying
+    the same game never triggers a redundant re-theme."""
     steam_id = cfg.get("steam_id64") or steamdetect.get_steam_id64()
+    excludes = set(cfg.get("exclude_appids", []))
+    state = load_state(cfg)
+
     if appid_override:
         game = {"appid": appid_override, "name": f"app {appid_override}",
                 "rtime_last_played": int(time.time()), "icon_url": None}
         # resolve the real name if we can
         try:
-            g = steamdetect.get_last_played_game(cfg["steam_api_key"], steam_id)
-            if g and g["appid"] == appid_override:
-                game = g
+            for g in steamdetect.get_owned_games(cfg["steam_api_key"], steam_id):
+                if g["appid"] == appid_override:
+                    game = g
+                    break
         except Exception:
             pass
+        source = "cli"
     else:
-        game = steamdetect.get_last_played_game(cfg["steam_api_key"], steam_id)
+        try:
+            games = steamdetect.get_owned_games(cfg["steam_api_key"], steam_id)
+        except Exception as e:
+            log(f"steam api error: {e}")
+            return
+        played = [g for g in games if g.get("rtime_last_played")]
+        game = max(played, key=lambda x: x["rtime_last_played"]) if played else None
+        source = "last-played"
+
+        # priority 1: a running custom (non-Steam) game
+        custom = steamdetect.find_running_custom_game(cfg.get("custom_games"))
+        if custom:
+            c_appid = custom.get("appid") or None
+            c_name = (custom.get("name") or "").strip() or custom["process"]
+            if c_appid in excludes:
+                log(f"  custom game {c_name} is in the exclude list; skipping")
+            else:
+                by_id = {g["appid"]: g for g in games}
+                game = dict(by_id.get(c_appid) or {
+                    "appid": c_appid, "name": c_name,
+                    "rtime_last_played": 0, "icon_url": None})
+                game["name"] = (custom.get("name") or "").strip() or game["name"]
+                game["cache_key"] = (str(c_appid) if c_appid else
+                                     "custom_" + re.sub(r"[^a-z0-9]+", "-",
+                                                         c_name.lower()).strip("-"))
+                source = "custom-process"
+        # priority 2: a Steam game running right now
+        elif cfg.get("now_playing", True):
+            running = steamdetect.get_running_appid()
+            if running and running not in excludes:
+                by_id = {g["appid"]: g for g in games}
+                game = by_id.get(running) or {
+                    "appid": running, "name": f"app {running}",
+                    "rtime_last_played": 0, "icon_url": None}
+                source = "now-playing"
+
     if not game:
         log("no played games returned by the Steam API")
         return
 
-    state = load_state(cfg)
-    key = f"{game['appid']}:{game['rtime_last_played']}"
-    ts = datetime.fromtimestamp(game["rtime_last_played"], timezone.utc)
-    log(f"last played: {game['name']} ({game['appid']}) at {ts:%Y-%m-%d %H:%M} UTC")
+    appid = game.get("appid")
+    cache_key = game.get("cache_key") or str(appid)
+    identity = cache_key  # one theme per game regardless of play timestamps
+    key = f"{source}:{identity}"
+    if game.get("rtime_last_played"):
+        ts = datetime.fromtimestamp(game["rtime_last_played"], timezone.utc)
+        log(f"{source}: {game['name']} ({appid or cache_key}) "
+            f"at {ts:%Y-%m-%d %H:%M} UTC")
+    else:
+        log(f"{source}: {game['name']} ({appid or cache_key})")
 
-    if game["appid"] in cfg.get("exclude_appids", []):
-        log(f"  appid {game['appid']} is in the exclude list; skipping")
+    if appid in excludes:
+        log(f"  appid {appid} is in the exclude list; skipping")
         return
-    if not force and state.get("last_key") == key:
+    if not force and state.get("last_identity") == identity:
+        # same game as the applied theme — just refresh bookkeeping
+        if state.get("last_key") != key:
+            state["last_key"] = key
+            save_state(cfg, state)
         log("  unchanged since last run")
         return
 
     result = run_pipeline(cfg, game, log, dry_run=dry_run)
     if result and not dry_run:
-        state.update({"last_key": key, "last_appid": game["appid"],
-                      "last_name": game["name"], "theme_path": result["theme_path"]})
+        state.update({"last_key": key, "last_identity": identity,
+                      "last_appid": appid, "last_cache_key": cache_key,
+                      "last_name": game["name"],
+                      "theme_path": result["theme_path"]})
         save_state(cfg, state)
 
 

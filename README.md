@@ -6,10 +6,13 @@ wallpaper, accent color, dark/light mode, Windows Terminal scheme, and
 
 ## Pipeline
 
-1. **Detect** — `steamdetect.py` polls `IPlayerService/GetOwnedGames` and sorts
-   by `rtime_last_played` (more reliable than `GetRecentlyPlayedGames`, which
-   has no timestamps and has shown stale-cache bugs). SteamID64 auto-detects
-   from the registry.
+1. **Detect** — `steamdetect.py` picks what to theme, in priority order:
+   a watched **non-Steam process** that's running (custom games), a **Steam
+   game running right now** (`HKCU\Software\Valve\Steam\RunningAppID`,
+   toggleable as *now playing*), otherwise the **last-played** game from
+   `IPlayerService/GetOwnedGames` sorted by `rtime_last_played` (more
+   reliable than `GetRecentlyPlayedGames`, which has no timestamps and has
+   shown stale-cache bugs). SteamID64 auto-detects from the registry.
 2. **Artwork** — `artwork.py` tries SteamGridDB (heroes/logos/icons with
    ultrawide dimension filters), then the Steam CDN
    (`library_hero.jpg`, `logo.png`, `header.jpg`, steamcommunity icon), then a
@@ -151,7 +154,9 @@ python main.py                   # polling service (every 30s)
 (http://127.0.0.1:8765):
 
 - **General** — appearance preference (always dark / always light / auto from
-  wallpaper brightness), palette style, poll interval, excluded app IDs.
+  wallpaper brightness), palette style, poll interval, excluded app IDs, and
+  the *now playing* toggle (theme a Steam game the moment it launches rather
+  than after it becomes your last-played).
 - **Steam** — API key + SteamID64 with auto-detect, live connection test.
 - **Artwork sources** — SteamGridDB / wallhaven keys, live key test.
 - **AI / VLM** — OpenAI-compatible endpoint setup with presets (LM Studio,
@@ -160,10 +165,39 @@ python main.py                   # polling service (every 30s)
 - **Upscaling** — undersized artwork can be upscaled via the Topaz Gigapixel
   API (cloud, per-image credits; the test button verifies the key *without*
   spending any) or the AI section's endpoint (OpenAI Images API, best-effort).
+- **Non-Steam games** — a process watch list so Epic/GOG/emulator titles
+  get themed too (see below).
 - **Extras** — Windows Terminal + SignalRGB toggles.
 - **Monitors** — auto-detected display list with per-display role mapping.
+- **Theme gallery** — every cached game theme with thumbnails; re-apply any
+  of them instantly (no API calls, no Topaz credits).
 - **Activity log** — live tail of `service.log`; "Save & apply now" re-runs
   the pipeline immediately.
+
+### Undo: Restore Windows look
+
+The first time the pipeline applies a theme it snapshots your existing
+wallpaper, accent color, and light/dark modes to `windows_backup.json`
+(gitignored, never overwritten — so it always holds *your* pre-app look,
+not one of our themes). The **Restore Windows look** button in the UI writes
+that snapshot back. To fully uninstall: restore, then remove the scheduled
+tasks (commands at the top of `install_task.ps1`) and delete the folder.
+
+### Non-Steam games
+
+Steam's API only sees Steam-launched games, so `custom_games` watches
+processes instead. One per line in the UI (or JSON in `config.json`):
+
+```
+eldenring.exe | 1245620 | ELDEN RING
+retroarch.exe |         | RetroArch
+```
+
+`process | appid (optional) | display name (optional)`. While the process is
+running it wins over Steam detection; when it exits, the theme returns to
+your Steam game. An appid (from any Steam store page URL) gets proper Steam
+CDN + SteamGridDB art; without one, art comes from a SteamGridDB name search
+with a wallhaven fallback.
 
 The polling service reloads `config.json` every cycle, so UI saves take
 effect without a restart.
@@ -295,9 +329,13 @@ reactivity, at the cost of palette skinning.
 
 - `.theme` files reference wallpapers by **absolute path** — `cache/` must not
   be cleaned blindly or applied themes break.
-- The Web API only sees Steam-launched games. Epic/GOG/non-Steam shortcuts
-  would need process-exit detection instead (WMI `__InstanceDeletionEvent`).
+- Non-Steam games are detected by **process polling** every
+  `poll_interval_seconds` — expect up to one interval of delay, and rename-
+  proofing is on you (the exe name must match).
 - `exclude_appids` defaults to `[431960]` (Wallpaper Engine — not a game).
+- **Development:** `python -m unittest discover -s tests -v` runs the test
+  suite (path sandboxing, web UI guards, effect rendering, INI injection).
+  CI runs the same on every push via GitHub Actions.
 - SignalRGB's REST API can only apply existing effects — parameters are
   read-only over HTTP. So the pipeline generates a custom palette-gradient
   effect (`Steam Theme.html`) into `Documents\WhirlwindFX\Effects` and

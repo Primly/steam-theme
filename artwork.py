@@ -10,6 +10,8 @@ falls back to the hero in that case.
 """
 
 import os
+import urllib.parse
+
 import requests
 from PIL import Image
 
@@ -51,13 +53,20 @@ def _sgdb_get(path, key, params=None):
     return r.json()
 
 
-def _sgdb_art(appid, key):
-    """Return {hero, logo, icon} of candidate URLs from SteamGridDB (may contain None)."""
+def _sgdb_art(appid, key, name=None):
+    """Return {hero, logo, icon} of candidate URLs from SteamGridDB (may contain None).
+    Non-Steam games have no appid: resolve via the autocomplete search instead."""
     out = {"hero": None, "logo": None, "icon": None}
-    game = _sgdb_get(f"/games/steam/{appid}", key)
-    if not game or not game.get("data"):
+    gid = None
+    if appid:
+        game = _sgdb_get(f"/games/steam/{appid}", key)
+        gid = game and (game.get("data") or {}).get("id")
+    elif name:
+        res = _sgdb_get(f"/search/autocomplete/{urllib.parse.quote(name)}", key)
+        hits = (res or {}).get("data") or []
+        gid = hits and hits[0].get("id")
+    if not gid:
         return out
-    gid = game["data"]["id"]
     hero = _sgdb_get(f"/heroes/game/{gid}", key,
                      {"dimensions": "3840x1240,1920x620,1600x650"})
     if hero and hero.get("data"):
@@ -87,12 +96,14 @@ def _wallhaven_hero(name, key=None):
     return None
 
 
-def fetch_artwork(appid, name, icon_url, cfg, log=print):
-    """Fetch art into cache/<appid>/ and return {hero, logo, icon} local paths.
+def fetch_artwork(appid, name, icon_url, cfg, log=print, cache_key=None):
+    """Fetch art into cache/<key>/ and return {hero, logo, icon} local paths.
 
     Any role that fails is simply absent from the dict; callers fall back to hero.
+    appid may be None for non-Steam custom games (SGDB name search + wallhaven
+    only; the Steam CDN has no listing for them).
     """
-    cache = os.path.join(cfg["cache_dir"], str(appid))
+    cache = os.path.join(cfg["cache_dir"], cache_key or str(appid))
     os.makedirs(cache, exist_ok=True)
     sgdb_key = cfg.get("steamgriddb_api_key") or ""
 
@@ -100,7 +111,7 @@ def fetch_artwork(appid, name, icon_url, cfg, log=print):
 
     if sgdb_key:
         try:
-            sgdb = _sgdb_art(appid, sgdb_key)
+            sgdb = _sgdb_art(appid, sgdb_key, name=name)
             for role in candidates:
                 if sgdb.get(role):
                     candidates[role].append(sgdb[role])
@@ -109,17 +120,18 @@ def fetch_artwork(appid, name, icon_url, cfg, log=print):
     else:
         log("  [art] no SteamGridDB key configured, skipping (cdn.steamgriddb.com fallback)")
 
-    candidates["hero"] += [
-        f"{CDN}/{appid}/library_hero.jpg",
-        f"{CDN}/{appid}/header.jpg",
-    ]
-    candidates["logo"] += [
-        f"{CDN}/{appid}/logo.png",
-        f"{CDN}/{appid}/header.jpg",
-    ]
-    if icon_url:
-        candidates["icon"].append(icon_url)
-    candidates["icon"].append(f"{CDN}/{appid}/header.jpg")
+    if appid:  # Steam CDN only exists for real appids
+        candidates["hero"] += [
+            f"{CDN}/{appid}/library_hero.jpg",
+            f"{CDN}/{appid}/header.jpg",
+        ]
+        candidates["logo"] += [
+            f"{CDN}/{appid}/logo.png",
+            f"{CDN}/{appid}/header.jpg",
+        ]
+        if icon_url:
+            candidates["icon"].append(icon_url)
+        candidates["icon"].append(f"{CDN}/{appid}/header.jpg")
 
     result = {}
     for role, urls in candidates.items():
