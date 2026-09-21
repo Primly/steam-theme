@@ -119,8 +119,20 @@ def run_pipeline(cfg, game, log, dry_run=False):
         f"({pal['accent_grade']}, {pal['accent_contrast']}:1), theme '{theme_name}'")
 
     # Stage 4 — composite + theme
+    # Unique filename per run: Windows keys its TranscodedWallpaper cache by
+    # path, so reusing the same filename would silently keep the OLD image.
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     wallpaper = theme_mod.compose_wallpaper(monitors, art,
-                                            os.path.join(cache, "wallpaper_span.jpg"), log)
+                                            os.path.join(cache, f"wallpaper_{stamp}.jpg"), log)
+    # remove previous composites; Windows keeps its own transcoded copy
+    import glob
+    for old in glob.glob(os.path.join(cache, "wallpaper_*.jpg")) + \
+                glob.glob(os.path.join(cache, "wallpaper_span.jpg")):
+        if os.path.abspath(old) != os.path.abspath(wallpaper):
+            try:
+                os.remove(old)
+            except OSError:
+                pass
     theme_path = theme_mod.write_theme_file(
         os.path.join(cache, "theme.theme"), theme_name, wallpaper, pal)
 

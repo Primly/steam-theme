@@ -258,6 +258,10 @@ def apply_theme(theme_path, log=print):
     visual transition. Note: applying while the workstation is LOCKED can
     produce a half-applied 'hybrid Custom' theme — the scheduled task includes
     an on-unlock trigger that re-runs with --reapply."""
+    # A lingering Settings window (from a previous .theme launch) silently
+    # swallows subsequent launches — close it first so the apply lands.
+    subprocess.run(["taskkill", "/F", "/IM", "SystemSettings.exe"],
+                   capture_output=True)
     subprocess.Popen(["cmd", "/c", "start", "", os.path.abspath(theme_path)],
                      shell=False)
     log(f"  [theme] launched {theme_path}")
