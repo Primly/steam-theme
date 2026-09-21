@@ -108,6 +108,80 @@ when run from an **elevated** shell — `SteamWallpaperTheme-Unlock`
 Custom" theme Windows can leave when a theme is applied while the session is
 locked. Without elevation the unlock task is skipped with a note.
 
+## SignalRGB integration — how it works
+
+### What you get
+
+Every time the pipeline themes a game, your RGB lighting switches to an
+effect **generated from that game's palette** — not just a static effect you
+picked beforehand. The generated effect appears in SignalRGB's effect list
+as **“Steam Wallpaper”** and is applied automatically.
+
+### Why it works this way
+
+SignalRGB's local REST API can **apply** existing effects and **read** their
+settings, but it cannot **change** an effect's colors — parameter writes are
+silently ignored (verified against the live API). Effects, however, are just
+HTML/JS canvas files ("Lightscripts"). So instead of configuring an existing
+effect, the pipeline **authors one**: it writes `Steam Wallpaper.html`,
+skinned with the current theme palette, into your effects folder, then
+applies it over the API.
+
+### Requirements & one-time setup
+
+1. **SignalRGB installed and running** with its local API reachable
+   (default `http://localhost:16038`). SignalRGB documents the local API as
+   requiring **Pro** for most endpoints — if the API tests fail in the config
+   UI, that's the first thing to check.
+2. **Custom effects folder** — by default `Documents\WhirlwindFX\Effects`.
+   If your Documents folder is redirected (e.g. OneDrive), the app finds the
+   real path automatically; `signalrgb.effects_dir` overrides it.
+3. **One restart of SignalRGB** after the first run, so it discovers the new
+   `Steam Wallpaper.html` file. (SignalRGB only scans the effects folder at
+   launch.) After that, every game update is applied live — no restarts.
+4. Enable **SignalRGB lighting sync** in the Extras section of the config UI.
+
+You can verify discovery any time in SignalRGB: the effect appears under
+Lighting Effects as “Steam Wallpaper” (publisher: SteamWallpaper).
+
+### Effect styles
+
+Six built-in styles (`signalrgb.effect_style`, selectable in the UI), all
+re-skinned per game from the extracted palette (accent + two dominant
+colors):
+
+| Style | Look |
+|---|---|
+| `gradient` | Palette gradient scrolling across devices; direction selectable (L→R, R→L, T→B, B→T) in the effect's own controls |
+| `pulse` | Accent glow breathing outward from the center |
+| `ripple` | Ambient expanding rings in palette colors on a dark base |
+| `rain` | Falling palette streaks with fading trails |
+| `comet` | Bright accent bar sweeping with a palette trail |
+| `solid` | Flat accent color, optional breathing |
+
+Each generated effect exposes **Accent / Palette 2 / Palette 3** color
+pickers (plus style controls like speed) in SignalRGB's Customize page —
+you can tweak them live, and they'll be re-skinned when the next game's
+theme applies.
+
+### Fallback chain & the mood map
+
+If the custom effect can't be used (e.g. first run before the discovery
+restart), the pipeline falls back to: **mood-mapped effect**
+(`signalrgb.effect_map`, e.g. `"neon": "Rainbow Wave"` matches a VLM mood of
+"neon cyberpunk") → **`default` effect**. Set `custom_effect: false` to skip
+generation entirely and always use the mood map.
+
+### About keypress-reactive (keytap) effects
+
+True per-key reactive effects (ripples on keypress, heatmaps, etc.) are
+stock **SignalRGB Pro** effects — SignalRGB publishes no Lightscript API for
+keyboard input, so community effects can't react to individual keys. Our
+`ripple` style is an *ambient* ripple. If you want keytap reactivity, set
+`custom_effect: false` and map a mood to a stock keytap effect (e.g.
+`"default": "Ripple"`) — you keep reactivity, at the cost of palette
+skinning.
+
 ## Gotchas
 
 - `.theme` files reference wallpapers by **absolute path** — `cache/` must not

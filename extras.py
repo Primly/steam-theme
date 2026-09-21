@@ -87,47 +87,12 @@ def _documents_dir():
         return os.path.join(os.path.expanduser("~"), "Documents")
 
 
-def _hex_to_hsl(hexcolor):
-    import colorsys
-    hexcolor = hexcolor.lstrip("#")
-    r, g, b = (int(hexcolor[i:i + 2], 16) / 255 for i in (0, 2, 4))
-    h, l, s = colorsys.rgb_to_hls(r, g, b)
-    return h * 360, s * 100, l * 100
-
-
 def write_signalrgb_effect(cfg, palette, log=print):
-    """Write 'Steam Wallpaper.html' — a palette gradient canvas effect.
-    Returns the effect title on success, None otherwise."""
-    colors = list(dict.fromkeys([palette["accent"]] + palette["colors"]))[:3]
-    while len(colors) < 3:
-        colors.append(palette["accent"])
-    props = "\n  ".join(
-        f'<meta property="color{i+1}" label="{"Accent" if i == 0 else f"Palette {i+1}"}" '
-        f'type="color" default="{c}"/>' for i, c in enumerate(colors))
-    stops = "\n    ".join(
-        f'g.addColorStop({i / (len(colors) - 1):.2f}, color{i+1});'
-        for i in range(len(colors)))
-    html = f"""<head>
-  <title>{SRGB_EFFECT_TITLE}</title>
-  <meta description="Auto-generated from the current Steam game theme. Colors are tweakable here or regenerated per game."/>
-  <meta publisher="SteamWallpaper"/>
-  {props}
-</head>
-<body style="margin: 0; padding: 0;">
-  <canvas id="exCanvas" width="320" height="200"></canvas>
-</body>
-<script>
-  var ctx = document.getElementById("exCanvas").getContext("2d");
-  function paint() {{
-    var g = ctx.createLinearGradient(0, 0, 320, 200);
-    {stops}
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 320, 200);
-    window.requestAnimationFrame(paint);
-  }}
-  paint();
-</script>
-"""
+    """Write 'Steam Wallpaper.html' in the configured style, skinned with the
+    theme palette. Returns the effect title on success, None otherwise."""
+    import srgb_effects
+    style = cfg.get("signalrgb", {}).get("effect_style", "gradient")
+    html = srgb_effects.render_effect(style, SRGB_EFFECT_TITLE, palette)
     effects_dir = (cfg.get("signalrgb", {}).get("effects_dir")
                    or os.path.join(_documents_dir(), "WhirlwindFX", "Effects"))
     try:

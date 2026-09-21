@@ -34,6 +34,7 @@
     "enabled": false,
     "base_url": "http://localhost:16038",
     "custom_effect": true,
+    "effect_style": "gradient",
     "effects_dir": "",
     "effect_map": {
       "default": "Solid Color",
