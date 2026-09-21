@@ -423,12 +423,25 @@ function renderMonitors() {
     const d = detected[i] || {};
     const c = (cfg.monitors || [])[i] || {match: "", role: "hero"};
     const w = d.rect ? `${d.rect[2]-d.rect[0]}×${d.rect[3]-d.rect[1]}` : "";
+    // build with DOM APIs (never innerHTML): config values are data on disk
+    // and must not be able to inject markup into this page
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${d.device || "monitor " + (i+1)} — ${d.desc || "not detected"} ${w}</td>
-      <td style="max-width:180px"><input data-mon="${i}" data-f="match" value="${c.match}"></td>
-      <td style="max-width:130px"><select data-mon="${i}" data-f="role">
-        ${["hero","logo","icon"].map(r => `<option ${r===c.role?"selected":""}>${r}</option>`).join("")}
-      </select></td>`;
+    const td1 = document.createElement("td");
+    td1.textContent = `${d.device || "monitor " + (i+1)} — ${d.desc || "not detected"} ${w}`;
+    const td2 = document.createElement("td"); td2.style.maxWidth = "180px";
+    const inp = document.createElement("input");
+    inp.dataset.mon = i; inp.dataset.f = "match"; inp.value = c.match || "";
+    td2.appendChild(inp);
+    const td3 = document.createElement("td"); td3.style.maxWidth = "130px";
+    const sel = document.createElement("select");
+    sel.dataset.mon = i; sel.dataset.f = "role";
+    ["hero", "logo", "icon"].forEach(r => {
+      const o = document.createElement("option");
+      o.value = r; o.textContent = r; o.selected = (r === c.role);
+      sel.appendChild(o);
+    });
+    td3.appendChild(sel);
+    tr.append(td1, td2, td3);
     t.appendChild(tr);
   }
 }

@@ -169,6 +169,25 @@ python main.py                   # polling service (every 30s)
 The polling service reloads `config.json` every cycle, so UI saves take
 effect without a restart.
 
+### Privacy & security
+
+- **Your keys stay local.** `config.json` holds your Steam / SteamGridDB /
+  Topaz / AI keys. It is gitignored and is never transmitted anywhere except
+  to the service each key belongs to. Only the placeholder
+  `config.example.json` is committed.
+- **The config UI is localhost-only.** It binds to `127.0.0.1` and
+  additionally verifies the `Host`/`Origin` headers on every request, which
+  blocks DNS-rebinding and cross-site (CSRF) requests from web pages — a
+  malicious site open in your browser cannot read your keys or change
+  settings through the local server.
+- **Config-supplied paths are sandboxed.** `cache_dir`, `state_file`, and
+  `log_file` must resolve inside the app folder; anything else is rejected,
+  so a hostile config can't turn the log viewer into a file reader or the
+  refetch button into a directory deleter.
+- **Machine-generated content is treated as untrusted.** Theme names from a
+  VLM are control-character-stripped before going into a `.theme` INI file,
+  and the UI renders all server-supplied strings as text, never as HTML.
+
 ### Scheduled task (service + unlock fix)
 
 ```powershell

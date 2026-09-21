@@ -248,9 +248,17 @@ MTSM=DABJDKT
 """
 
 
+def _ini_safe(text, limit=128):
+    """Strip control characters from a value headed for a .theme INI file.
+    A theme name containing a newline could otherwise inject extra INI keys
+    (e.g. a screensaver path) into the file. Theme names can come from a
+    VLM, so treat them as untrusted."""
+    return "".join(ch for ch in str(text) if 32 <= ord(ch) < 127)[:limit]
+
+
 def write_theme_file(path, display_name, wallpaper_path, palette):
     # .theme INI is safest as ASCII; strip any fancy characters from game names
-    display_name = display_name.encode("ascii", "replace").decode()
+    display_name = _ini_safe(display_name.encode("ascii", "replace").decode())
     content = THEME_TEMPLATE.format(
         display_name=display_name,
         wallpaper=os.path.abspath(wallpaper_path),
@@ -270,6 +278,7 @@ def apply_theme(theme_path, log=print):
     # swallows subsequent launches — close it first so the apply lands.
     subprocess.run(["taskkill", "/F", "/IM", "SystemSettings.exe"],
                    capture_output=True)
-    subprocess.Popen(["cmd", "/c", "start", "", os.path.abspath(theme_path)],
-                     shell=False)
+    # ShellExecute 'open' — same as double-clicking the file, but with no
+    # cmd.exe in between to misparse shell metacharacters in the path
+    os.startfile(os.path.abspath(theme_path))
     log(f"  [theme] launched {theme_path}")

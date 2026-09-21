@@ -22,6 +22,7 @@ import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
 import requests
 
@@ -30,6 +31,11 @@ CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 HTML_PATH = os.path.join(BASE_DIR, "webui.html")
 
 TOPAZ_BASE = "https://api.topazlabs.com/image/v1"
+
+MAX_BODY_BYTES = 256 * 1024          # config JSON is a few KB; cap abuse
+MAX_LOG_LINES = 1000
+REDO_MODES = {"reapply", "regenerate", "refetch"}
+LOCAL_HOSTNAMES = {"127.0.0.1", "localhost", "::1", "[::1]"}
 
 
 def load_config():
@@ -44,6 +50,18 @@ def load_config():
 def save_config(cfg):
     if not isinstance(cfg, dict):
         raise ValueError("config must be a JSON object")
+    # path-like settings must stay inside the app directory — a hostile value
+    # here would otherwise turn /api/log into an arbitrary file read and the
+    # refetch handler into an arbitrary directory delete
+    import main as app
+    for key, default in (("cache_dir", "cache"), ("state_file", "state.json"),
+                         ("log_file", "service.log")):
+        val = cfg.get(key)
+        if val:
+            try:
+                app.safe_join(BASE_DIR, val)
+            except ValueError:
+                raise ValueError(f"{key!r} must be a path inside the app folder")
     tmp = CONFIG_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
@@ -86,6 +104,8 @@ def test_sgdb(body):
 def test_ai(body):
     """OpenAI-compatible: list models, then a 1-token chat completion."""
     base = (body.get("base_url") or "").rstrip("/")
+    if urlparse(base).scheme not in ("http", "https"):
+        return {"ok": False, "error": "base_url must be an http(s) URL"}
     key = body.get("api_key") or ""
     model = body.get("model") or ""
     headers = {"Authorization": f"Bearer {key}"} if key else {}
@@ -149,21 +169,70 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)
 
     def _body(self):
-        n = int(self.headers.get("Content-Length") or 0)
+        """Parse the JSON request body. Returns None when the body is absent,
+        unreadable, or over the size cap — callers must reject the request
+        rather than treating it as an empty object."""
         try:
-            return json.loads(self.rfile.read(n) or b"{}")
-        except json.JSONDecodeError:
-            return {}
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return None
+        if n <= 0 or n > MAX_BODY_BYTES:
+            # drain a bounded amount so the client can actually read our 400
+            # (closing with unread request data triggers a TCP RST on Windows
+            # and the response is lost)
+            self.close_connection = True
+            remaining = min(max(n, 0), 4 * 1024 * 1024)
+            while remaining > 0:
+                chunk = self.rfile.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+            return None
+        try:
+            data = json.loads(self.rfile.read(n))
+            return data if isinstance(data, (dict, list)) else None
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+
+    def _local_only(self):
+        """DNS-rebinding / CSRF guard. The server holds every API key in
+        config.json and can trigger file writes, so it must only answer
+        genuinely-local requests:
+          - Host must be 127.0.0.1/localhost/::1 (blocks DNS-rebinding,
+            where an attacker domain resolves to 127.0.0.1 and would
+            otherwise be same-origin with this server)
+          - Origin, when present, must also be local (blocks cross-site
+            POSTs from arbitrary web pages — those don't need CORS to
+            *send*, only to read)
+          - Sec-Fetch-Site: cross-site is rejected outright
+        """
+        def host_ok(value):
+            # Host headers are bare 'name:port'; Origin includes a scheme
+            parsed = urlparse(value if "://" in value else f"//{value}")
+            return (parsed.hostname or "").lower() in LOCAL_HOSTNAMES
+
+        if not host_ok(self.headers.get("Host", "")):
+            return False
+        origin = self.headers.get("Origin")
+        if origin and not host_ok(origin):
+            return False
+        if (self.headers.get("Sec-Fetch-Site") or "").lower() == "cross-site":
+            return False
+        return True
 
     def log_message(self, *a):
         pass  # quiet
 
     # ---- GET
     def do_GET(self):
+        if not self._local_only():
+            self._send(403, {"error": "forbidden: local requests only"})
+            return
         path = self.path.split("?")[0]
         if path == "/":
             with open(HTML_PATH, "rb") as f:
@@ -184,33 +253,41 @@ class Handler(BaseHTTPRequestHandler):
             cfg = app.load_config()
             state = app.load_state(cfg)
             state["theme_name"] = None
-            pal = os.path.join(BASE_DIR, cfg.get("cache_dir", "cache"),
-                               str(state.get("last_appid") or ""), "palette.json")
             try:
+                pal = app.safe_join(app.cfg_path(cfg, "cache_dir", "cache"),
+                                    str(state.get("last_appid") or ""), "palette.json")
                 with open(pal, encoding="utf-8") as f:
                     state["theme_name"] = json.load(f).get("theme_name")
-            except (OSError, json.JSONDecodeError):
+            except (OSError, ValueError, json.JSONDecodeError):
                 pass
             self._send(200, state)
         elif path == "/api/log":
-            import urllib.parse
-            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            lines = int(q.get("lines", [200])[0])
-            log_path = ""
+            import main as app
             try:
-                log_path = os.path.join(BASE_DIR, load_config().get("log_file", "service.log"))
+                lines = max(1, min(int(parse_qs(urlparse(self.path).query)
+                                       .get("lines", [200])[0]), MAX_LOG_LINES))
+            except ValueError:
+                lines = 200
+            log_path = app.cfg_path(load_config(), "log_file", "service.log")
+            try:
                 with open(log_path, encoding="utf-8", errors="replace") as f:
                     tail = f.readlines()[-lines:]
                 self._send(200, {"ok": True, "log": "".join(tail)})
             except OSError:
-                self._send(200, {"ok": False, "log": f"(no log yet at {log_path})"})
+                self._send(200, {"ok": False, "log": "(no log yet)"})
         else:
             self._send(404, {"error": "not found"})
 
     # ---- POST
     def do_POST(self):
+        if not self._local_only():
+            self._send(403, {"error": "forbidden: local requests only"})
+            return
         path = self.path.split("?")[0]
         body = self._body()
+        if body is None:
+            self._send(400, {"ok": False, "error": "missing or invalid JSON body"})
+            return
         if path == "/api/config":
             try:
                 save_config(body)
@@ -229,6 +306,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": False, "error": str(e)})
         elif path == "/api/redo":
             mode = body.get("mode", "regenerate")
+            if mode not in REDO_MODES:
+                self._send(400, {"ok": False, "error": f"unknown redo mode {mode!r}"})
+                return
 
             def work():
                 import shutil
@@ -242,9 +322,9 @@ class Handler(BaseHTTPRequestHandler):
                         app.reapply(cfg, log)
                         return
                     if mode == "refetch" and appid:
-                        shutil.rmtree(os.path.join(
-                            BASE_DIR, cfg.get("cache_dir", "cache"), str(appid)),
-                            ignore_errors=True)
+                        target = app.safe_join(
+                            app.cfg_path(cfg, "cache_dir", "cache"), str(appid))
+                        shutil.rmtree(target, ignore_errors=True)
                         log(f"redo: cleared cache for appid {appid} "
                             "(art + upscales will be re-created)")
                     app.check_once(cfg, log, force=True)

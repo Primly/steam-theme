@@ -30,6 +30,28 @@ import upscale
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+def safe_join(base, *parts):
+    """Join parts under base; refuse anything that escapes it (path traversal)."""
+    base = os.path.abspath(base)
+    p = os.path.abspath(os.path.join(base, *parts))
+    try:
+        inside = os.path.commonpath([base, p]) == base
+    except ValueError:  # different drive
+        inside = False
+    if not inside:
+        raise ValueError(f"refusing path outside the app directory: {p}")
+    return p
+
+
+def cfg_path(cfg, key, default):
+    """Resolve a config path setting (cache_dir/state_file/log_file) inside
+    BASE_DIR, falling back to the default if a (hostile) value would escape."""
+    try:
+        return safe_join(BASE_DIR, cfg.get(key) or default)
+    except ValueError:
+        return os.path.join(BASE_DIR, default)
+
+
 def load_config():
     """Load config.json, falling back to config.example.json on a fresh
     checkout so the config UI works before the first save. Placeholder values
@@ -46,7 +68,7 @@ def load_config():
 
 
 def _log_factory(cfg):
-    log_path = os.path.join(BASE_DIR, cfg.get("log_file", "service.log"))
+    log_path = cfg_path(cfg, "log_file", "service.log")
 
     def log(msg):
         line = f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {msg}"
@@ -60,7 +82,7 @@ def _log_factory(cfg):
 
 
 def _state_path(cfg):
-    return os.path.join(BASE_DIR, cfg.get("state_file", "state.json"))
+    return cfg_path(cfg, "state_file", "state.json")
 
 
 def load_state(cfg):
@@ -78,12 +100,13 @@ def save_state(cfg, state):
 
 def run_pipeline(cfg, game, log, dry_run=False):
     appid, name = game["appid"], game["name"]
-    cache = os.path.join(BASE_DIR, cfg["cache_dir"], str(appid))
+    cache_root = cfg_path(cfg, "cache_dir", "cache")
+    cache = safe_join(cache_root, str(appid))
     log(f"pipeline: {name} ({appid})")
 
     # Stage 2 — art (cached per appid)
     art = artwork.fetch_artwork(appid, name, game.get("icon_url"),
-                                {**cfg, "cache_dir": os.path.join(BASE_DIR, cfg["cache_dir"])},
+                                {**cfg, "cache_dir": cache_root},
                                 log)
     if not art:
         log("  !! no artwork found at all; aborting")
