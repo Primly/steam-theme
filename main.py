@@ -285,7 +285,12 @@ def check_once(cfg, log, force=False, appid_override=None, dry_run=False):
         # priority 1: a running custom (non-Steam) game
         custom = steamdetect.find_running_custom_game(cfg.get("custom_games"))
         if custom:
-            c_appid = custom.get("appid") or None
+            # appid must be a positive int; a hand-edited config value that
+            # isn't is ignored rather than ever reaching a path
+            try:
+                c_appid = int(custom.get("appid") or 0) or None
+            except (TypeError, ValueError):
+                c_appid = None
             c_name = (custom.get("name") or "").strip() or custom["process"]
             if c_appid in excludes:
                 log(f"  custom game {c_name} is in the exclude list; skipping")

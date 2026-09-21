@@ -238,11 +238,17 @@ class Handler(BaseHTTPRequestHandler):
           - Host must be 127.0.0.1/localhost/::1 (blocks DNS-rebinding,
             where an attacker domain resolves to 127.0.0.1 and would
             otherwise be same-origin with this server)
-          - Origin, when present, must also be local (blocks cross-site
-            POSTs from arbitrary web pages — those don't need CORS to
-            *send*, only to read)
+          - Origin, when present, must be EXACTLY this server's origin.
+            A merely-local origin is not enough: other localhost apps
+            (dev servers, LM Studio, SignalRGB, ...) could serve a
+            compromised page that POSTs cross-port — simple requests
+            don't need CORS to *send*, only to read
           - Sec-Fetch-Site: cross-site is rejected outright
         """
+        port = self.server.server_address[1]
+        own_origins = {f"http://127.0.0.1:{port}", f"http://localhost:{port}",
+                       f"http://[::1]:{port}"}
+
         def host_ok(value):
             # Host headers are bare 'name:port'; Origin includes a scheme
             parsed = urlparse(value if "://" in value else f"//{value}")
@@ -251,7 +257,7 @@ class Handler(BaseHTTPRequestHandler):
         if not host_ok(self.headers.get("Host", "")):
             return False
         origin = self.headers.get("Origin")
-        if origin and not host_ok(origin):
+        if origin and origin not in own_origins:
             return False
         if (self.headers.get("Sec-Fetch-Site") or "").lower() == "cross-site":
             return False
@@ -386,7 +392,13 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=work, daemon=True).start()
             self._send(200, {"ok": True, "detail": f"{mode} started; watch the log"})
         elif path == "/api/apply-theme":
+            import re as _re
             key = str(body.get("key") or "")
+            # cache keys are appids or custom_<slug> — reject anything fancier
+            # up front (safe_join would catch it too, but fail fast + cheap)
+            if not _re.fullmatch(r"[A-Za-z0-9._-]+", key):
+                self._send(400, {"ok": False, "error": "bad theme key"})
+                return
 
             def work():
                 import main as app

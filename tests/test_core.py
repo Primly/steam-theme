@@ -86,6 +86,17 @@ class TestSrgbEffects(unittest.TestCase):
         html = srgb_effects.render_effect("nope", "Steam Theme", self.PAL)
         self.assertIn("direction", html)  # gradient's meta property
 
+    def test_palette_color_injection_neutralized(self):
+        # a tampered cache/palette.json must not inject script into the
+        # SignalRGB effect (an HTML/JS file SignalRGB executes)
+        evil = {"accent": '#66C0F4"><script>alert(1)</script>',
+                "colors": ["#112233", 'x" onload="y']}
+        html = srgb_effects.render_effect("solid", "Steam Theme", evil)
+        self.assertNotIn("alert(1)", html)
+        self.assertNotIn("onload", html)
+        self.assertNotIn('\"><script>', html)  # no attribute breakout
+        self.assertIn('#66C0F4', html)  # sanitized accent kept
+
     def test_short_palette_is_padded(self):
         html = srgb_effects.render_effect("solid", "Steam Theme",
                                           {"accent": "#ABCDEF", "colors": []})

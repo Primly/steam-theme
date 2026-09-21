@@ -285,11 +285,23 @@ def _comet(title, c1, c2, c3):
 _RENDERERS = {"solid": _solid, "gradient": _gradient, "pulse": _pulse,
               "ripple": _ripple, "rain": _rain, "comet": _comet}
 
+import re as _re
+
+
+def _safe_color(value, fallback="#66C0F4"):
+    """Colors are interpolated into an HTML/JS file executed by SignalRGB, so
+    a tampered cache/palette.json must not be able to inject script into the
+    effect. Anything that isn't a plain #RRGGBB becomes a safe default."""
+    s = str(value or "").strip()
+    return s if _re.fullmatch(r"#[0-9A-Fa-f]{6}", s) else fallback
+
 
 def render_effect(style, title, palette):
     """Render a Lightscript HTML file for `style` skinned with `palette`."""
-    colors = list(dict.fromkeys([palette["accent"]] + palette.get("colors", [])))[:3]
+    accent = _safe_color(palette.get("accent"))
+    raw = (palette.get("colors") or [])
+    colors = list(dict.fromkeys([accent] + [_safe_color(c) for c in raw]))[:3]
     while len(colors) < 3:
-        colors.append(palette["accent"])
+        colors.append(accent)
     fn = _RENDERERS.get(style, _gradient)
     return fn(title, colors[0], colors[1], colors[2])

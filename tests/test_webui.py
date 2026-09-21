@@ -72,6 +72,19 @@ class TestLocalOnlyGuard(ServerFixture):
         self.assertEqual(self.req("/api/config", "POST",
                                   fetchsite="cross-site", body={"a": 1}), 403)
 
+    def test_cross_port_localhost_rejected(self):
+        # a compromised page served by ANOTHER local app (LM Studio :1234,
+        # SignalRGB :16038, any dev server) must not be able to POST to us
+        self.assertEqual(self.req("/api/config", "POST",
+                                  origin="http://127.0.0.1:1234",
+                                  body={"a": 1}), 403)
+        self.assertEqual(self.req("/api/config", "POST",
+                                  origin="http://localhost:16038",
+                                  body={"a": 1}), 403)
+        self.assertEqual(self.req("/api/config", "POST",
+                                  origin="https://localhost",
+                                  body={"a": 1}), 403)
+
     def test_local_origin_post_accepted(self):
         # must reach validation (400 for junk), not the guard (403)
         self.assertEqual(self.req("/api/config", "POST",
@@ -95,6 +108,11 @@ class TestBodyValidation(ServerFixture):
 
     def test_redo_mode_allowlist(self):
         self.assertEqual(self.req("/api/redo", "POST", body={"mode": "nope"}), 400)
+
+    def test_apply_theme_key_validated(self):
+        for bad in ("../../evil", "a b", "", "a|b", "..\\.."):
+            self.assertEqual(
+                self.req("/api/apply-theme", "POST", body={"key": bad}), 400)
 
 
 class TestArtEndpoint(ServerFixture):

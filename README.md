@@ -212,14 +212,21 @@ effect without a restart.
   additionally verifies the `Host`/`Origin` headers on every request, which
   blocks DNS-rebinding and cross-site (CSRF) requests from web pages — a
   malicious site open in your browser cannot read your keys or change
-  settings through the local server.
+  settings through the local server. `Origin` must match the server's own
+  origin *exactly*, so a compromised page served by another localhost app
+  (a dev server, LM Studio, SignalRGB, ...) can't POST to it either.
 - **Config-supplied paths are sandboxed.** `cache_dir`, `state_file`, and
   `log_file` must resolve inside the app folder; anything else is rejected,
   so a hostile config can't turn the log viewer into a file reader or the
   refetch button into a directory deleter.
 - **Machine-generated content is treated as untrusted.** Theme names from a
   VLM are control-character-stripped before going into a `.theme` INI file,
-  and the UI renders all server-supplied strings as text, never as HTML.
+  the UI renders all server-supplied strings as text (never as HTML), and
+  palette colors are validated as `#RRGGBB` before being baked into the
+  SignalRGB effect (an HTML/JS file SignalRGB executes).
+- **Supply chain:** Dependabot watches the pip requirements and the GitHub
+  Actions workflows for known-vulnerable versions; CI runs the test suite
+  (including the guard tests above) on every push and pull request.
 
 ### Scheduled task (service + unlock fix)
 
