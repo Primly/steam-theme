@@ -239,4 +239,6 @@ def serve(port=8765, open_browser=True):
 
 
 if __name__ == "__main__":
-    serve()
+    # direct launch = background server (e.g. scheduled task): no browser pop-up.
+    # use `python main.py --ui` for an interactive launch that opens the page.
+    serve(open_browser=False)

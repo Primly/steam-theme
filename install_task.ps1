@@ -1,15 +1,15 @@
-# Registers "SteamWallpaperTheme" as a scheduled task with two triggers:
-#   1. At logon          -> runs the polling service (pythonw main.py)
-#   2. Workstation unlock -> re-applies the cached theme (--reapply),
-#      fixing the "hybrid Custom" half-applied theme Windows can leave behind
-#      when a theme is applied while the session was locked.
+# Registers three user-level scheduled tasks:
+#   SteamWallpaperTheme         logon  -> polling service (pythonw main.py)
+#   SteamWallpaperTheme-Unlock  unlock -> re-apply cached theme (--reapply),
+#                                fixing the "hybrid Custom" half-applied theme
+#   SteamWallpaperUI            logon  -> browser config UI on 127.0.0.1:8765
 #
-# Run from an elevated or normal PowerShell prompt (user-level task, no admin needed):
+# Usage:
 #   powershell -ExecutionPolicy Bypass -File install_task.ps1
-#
-# Remove with:
-#   schtasks /Delete /TN "SteamWallpaperTheme" /F
-#   schtasks /Delete /TN "SteamWallpaperTheme-Unlock" /F
+# Remove:
+#   Unregister-ScheduledTask -TaskName SteamWallpaperTheme -Confirm:$false
+#   Unregister-ScheduledTask -TaskName SteamWallpaperTheme-Unlock -Confirm:$false
+#   Unregister-ScheduledTask -TaskName SteamWallpaperUI -Confirm:$false
 
 $ErrorActionPreference = "Stop"
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -21,65 +21,44 @@ if (-not $pythonw) {
 }
 if (-not (Test-Path $pythonw)) { throw "pythonw.exe not found" }
 
-$main = Join-Path $dir "main.py"
+$main  = Join-Path $dir "main.py"
+$webui = Join-Path $dir "webui.py"
+$user  = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive
 
-# ---- Task 1: service at logon ------------------------------------------------
-$xml1 = @"
-<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <Triggers>
-    <LogonTrigger><Enabled>true</Enabled></LogonTrigger>
-  </Triggers>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-  </Settings>
-  <Actions>
-    <Exec>
-      <Command>$pythonw</Command>
-      <Arguments>"$main"</Arguments>
-      <WorkingDirectory>$dir</WorkingDirectory>
-    </Exec>
-  </Actions>
-</Task>
-"@
+$logon  = New-ScheduledTaskTrigger -AtLogOn -User $user
+$unlockClass = Get-CimClass -Namespace "root\Microsoft\Windows\TaskScheduler" `
+    -ClassName "MSFT_TaskSessionStateChangeTrigger"
+$unlock = New-CimInstance -CimClass $unlockClass -ClientOnly `
+    -Property @{ StateChange = 8 }   # 8 = SessionUnlock
 
-# ---- Task 2: re-apply on workstation unlock ----------------------------------
-$xml2 = @"
-<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <Triggers>
-    <SessionStateChangeTrigger>
-      <Enabled>true</Enabled>
-      <StateChange>SessionUnlock</StateChange>
-    </SessionStateChangeTrigger>
-  </Triggers>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <ExecutionTimeLimit>PT5M</ExecutionTimeLimit>
-  </Settings>
-  <Actions>
-    <Exec>
-      <Command>$pythonw</Command>
-      <Arguments>"$main" --reapply</Arguments>
-      <WorkingDirectory>$dir</WorkingDirectory>
-    </Exec>
-  </Actions>
-</Task>
-"@
+$svcSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
+    -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries
+$quickSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
 
-$f1 = Join-Path $env:TEMP "swt_logon.xml"
-$f2 = Join-Path $env:TEMP "swt_unlock.xml"
-[IO.File]::WriteAllText($f1, $xml1, [Text.Encoding]::Unicode)
-[IO.File]::WriteAllText($f2, $xml2, [Text.Encoding]::Unicode)
+Register-ScheduledTask -TaskName "SteamWallpaperTheme" -Force `
+    -Action (New-ScheduledTaskAction -Execute $pythonw -Argument "`"$main`"" -WorkingDirectory $dir) `
+    -Trigger $logon -Settings $svcSettings -Principal $principal | Out-Null
 
-schtasks /Create /TN "SteamWallpaperTheme" /XML $f1 /F
-schtasks /Create /TN "SteamWallpaperTheme-Unlock" /XML $f2 /F
-Remove-Item $f1, $f2
+try {
+    Register-ScheduledTask -TaskName "SteamWallpaperTheme-Unlock" -Force `
+        -Action (New-ScheduledTaskAction -Execute $pythonw -Argument "`"$main`" --reapply" -WorkingDirectory $dir) `
+        -Trigger $unlock -Settings $quickSettings -Principal $principal | Out-Null
+} catch [System.UnauthorizedAccessException], [Microsoft.Management.Infrastructure.CimException] {
+    Write-Host "NOTE: unlock trigger needs an elevated shell; skipped."
+    Write-Host "      Re-run this script as Administrator to add it (optional)."
+}
+
+Register-ScheduledTask -TaskName "SteamWallpaperUI" -Force `
+    -Action (New-ScheduledTaskAction -Execute $pythonw -Argument "`"$webui`"" -WorkingDirectory $dir) `
+    -Trigger $logon -Settings $svcSettings -Principal $principal | Out-Null
 
 Write-Host ""
 Write-Host "Installed:"
-Write-Host "  SteamWallpaperTheme         (logon -> service, $pythonw `"$main`")"
+Write-Host "  SteamWallpaperTheme         (logon -> polling service)"
 Write-Host "  SteamWallpaperTheme-Unlock  (unlock -> --reapply)"
+Write-Host "  SteamWallpaperUI            (logon -> http://127.0.0.1:8765)"
+Write-Host ""
+Write-Host "Start now with:  schtasks /Run /TN SteamWallpaperUI"
+Write-Host "                 schtasks /Run /TN SteamWallpaperTheme"

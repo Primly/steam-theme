@@ -101,10 +101,12 @@ effect without a restart.
 powershell -ExecutionPolicy Bypass -File install_task.ps1
 ```
 
-Creates `SteamWallpaperTheme` (logon → polling service) and
-`SteamWallpaperTheme-Unlock` (workstation unlock → `--reapply`), which fixes
-the half-applied "hybrid Custom" theme Windows can leave when a theme is
-applied while the session is locked.
+Creates `SteamWallpaperTheme` (logon → polling service),
+`SteamWallpaperUI` (logon → config page on http://127.0.0.1:8765), and —
+when run from an **elevated** shell — `SteamWallpaperTheme-Unlock`
+(workstation unlock → `--reapply`), which fixes the half-applied "hybrid
+Custom" theme Windows can leave when a theme is applied while the session is
+locked. Without elevation the unlock task is skipped with a note.
 
 ## Gotchas
 
