@@ -33,6 +33,10 @@ TOPAZ_BASE = "https://api.topazlabs.com/image/v1"
 
 
 def load_config():
+    # fresh checkout: serve example-config defaults until the user saves
+    if not os.path.exists(CONFIG_PATH):
+        import main as app
+        return app.load_config()
     with open(CONFIG_PATH, encoding="utf-8") as f:
         return json.load(f)
 

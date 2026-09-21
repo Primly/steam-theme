@@ -31,8 +31,18 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def load_config():
-    with open(os.path.join(BASE_DIR, "config.json"), encoding="utf-8") as f:
-        return json.load(f)
+    """Load config.json, falling back to config.example.json on a fresh
+    checkout so the config UI works before the first save. Placeholder values
+    ('YOUR_...') are blanked so no API gets called with a junk key."""
+    path = os.path.join(BASE_DIR, "config.json")
+    if not os.path.exists(path):
+        path = os.path.join(BASE_DIR, "config.example.json")
+    with open(path, encoding="utf-8") as f:
+        cfg = json.load(f)
+    for k, v in list(cfg.items()):
+        if isinstance(v, str) and v.startswith("YOUR_"):
+            cfg[k] = ""
+    return cfg
 
 
 def _log_factory(cfg):
@@ -237,6 +247,9 @@ def main():
 
     cfg = load_config()
     log = _log_factory(cfg)
+    if not os.path.exists(os.path.join(BASE_DIR, "config.json")):
+        log("config.json not found — using config.example.json defaults; "
+            "run 'python main.py --ui' to set your Steam API key")
 
     if args.reapply:
         reapply(cfg, log)

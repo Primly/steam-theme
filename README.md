@@ -43,23 +43,97 @@ small/square icons get a **centered treatment** instead: the art is placed on
 a darkened, Gaussian-blurred backdrop of the hero, so wordmarks and icons
 stay crisp rather than being zoomed and cropped.
 
-## Setup
+## Getting started (from zero)
+
+No git or programming experience needed — follow the steps in order. All
+commands go in **PowerShell** (Start menu → type `PowerShell` → Enter).
+
+### 1. Install Python
+
+1. Download Python 3.10 or newer from <https://www.python.org/downloads/>.
+2. Run the installer. **Tick the “Add python.exe to PATH” checkbox on the
+   first screen** — this is required, then click Install.
+3. Close and reopen PowerShell, then verify:
+
+   ```powershell
+   python --version
+   ```
+
+   You should see something like `Python 3.13.5`. If you get an error, the
+   PATH checkbox was missed — re-run the installer and tick it.
+
+### 2. Get the code
+
+**Option A — with git (recommended; makes updates one command):**
+
+1. Install Git from <https://git-scm.com/download/win> (defaults are fine —
+   keep clicking Next).
+2. In PowerShell, pick a home for the project and clone it:
+
+   ```powershell
+   cd $env:USERPROFILE\Documents
+   git clone https://github.com/Primly/steam-wallpaper.git
+   cd steam-wallpaper
+   ```
+
+   The repository is **private**, so the first clone pops up a GitHub sign-in
+   in your browser — sign in once and Windows remembers it.
+
+**Option B — without git:**
+
+1. Open the repository page in your browser (while signed in to GitHub),
+   click the green **Code** button → **Download ZIP**.
+2. Extract the ZIP, then in PowerShell `cd` into the extracted folder, e.g.:
+
+   ```powershell
+   cd $env:USERPROFILE\Downloads\steam-wallpaper-main
+   ```
+
+**Updating later:** with Option A, run `git pull` inside the project folder.
+With Option B, download a fresh ZIP.
+
+### 3. Install the dependencies
+
+From the project folder:
 
 ```powershell
 pip install -r requirements.txt
-copy config.example.json config.json
 ```
 
-`config.json` is gitignored (it holds your API keys). Fill in:
+### 4. Configure it in your browser
 
-1. **Steam key** — free at https://steamcommunity.com/dev/apikey. Leave
-   `steam_id64` empty to auto-detect the logged-in Steam user.
-2. **SteamGridDB key** (optional but much better art): create a free key at
-   https://www.steamgriddb.com/profile/preferences/api and set
-   `steamgriddb_api_key`.
-3. **AI / upscaling** (optional): easiest via the config UI
-   (`python main.py --ui`) — or edit `ai` / `upscaling` / `topaz` in
-   `config.json` directly.
+```powershell
+python main.py --ui
+```
+
+This creates `config.json` on first save and opens the settings page at
+<http://127.0.0.1:8765> — everything is point-and-click:
+
+1. **Steam** — paste a free Steam Web API key from
+   <https://steamcommunity.com/dev/apikey> (there's a link in the UI), click
+   **Auto-detect** for the SteamID64, then **Test** to verify.
+2. **Artwork sources** — optional but *much* better art: a free SteamGridDB
+   key from <https://www.steamgriddb.com/profile/preferences/api>.
+3. Everything else (AI/VLM, Topaz upscaling, SignalRGB, Windows Terminal) is
+   optional and documented inline in the UI, with test buttons.
+
+`config.json` is gitignored — your API keys never leave your machine via git.
+
+### 5. Try it
+
+```powershell
+python main.py --once --dry-run   # full pipeline, changes nothing
+python main.py --once             # real run: wallpaper + theme apply
+```
+
+### 6. Make it automatic
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install_task.ps1
+```
+
+This registers the background service and config page to start at logon —
+see [Scheduled task](#scheduled-task-service--unlock-fix) for details.
 
 ## Run
 
@@ -194,8 +268,8 @@ Requirements:
   no key positions, so they simply keep playing the ambient part.
 
 If you'd rather use a stock Pro keytap effect instead, set
-`custom_effect: false` and map a mood to it (e.g. `"default": "Ripple"`) —
-you keep reactivity, at the cost of palette skinning.
+`custom_effect: false` and `fallback_effect: "Ripple"` — you keep
+reactivity, at the cost of palette skinning.
 
 ## Gotchas
 
@@ -209,6 +283,7 @@ you keep reactivity, at the cost of palette skinning.
   effect (`Steam Wallpaper.html`) into `Documents\WhirlwindFX\Effects` and
   applies it by name. One SignalRGB restart is needed the first time so it
   discovers the file; afterwards every game updates it live. Set
-  `signalrgb.custom_effect: false` to fall back to the static mood →
-  effect map. `signalrgb.effects_dir` overrides the target folder if needed
-  (OneDrive-redirected Documents folders are handled automatically).
+  `signalrgb.custom_effect: false` to always use the named
+  `signalrgb.fallback_effect` instead. `signalrgb.effects_dir` overrides the
+  target folder if needed (OneDrive-redirected Documents folders are handled
+  automatically).
