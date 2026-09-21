@@ -33,6 +33,8 @@
   "signalrgb": {
     "enabled": false,
     "base_url": "http://localhost:16038",
+    "custom_effect": true,
+    "effects_dir": "",
     "effect_map": {
       "default": "Solid Color",
       "neon": "Rainbow Wave",

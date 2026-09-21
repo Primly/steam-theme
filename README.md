@@ -115,5 +115,11 @@ locked. Without elevation the unlock task is skipped with a note.
 - The Web API only sees Steam-launched games. Epic/GOG/non-Steam shortcuts
   would need process-exit detection instead (WMI `__InstanceDeletionEvent`).
 - `exclude_appids` defaults to `[431960]` (Wallpaper Engine — not a game).
-- SignalRGB's local API surface varies by version; if the ping fails, check
-  the logged error and adjust `extras.apply_signalrgb`.
+- SignalRGB's REST API can only apply existing effects — parameters are
+  read-only over HTTP. So the pipeline generates a custom palette-gradient
+  effect (`Steam Wallpaper.html`) into `Documents\WhirlwindFX\Effects` and
+  applies it by name. One SignalRGB restart is needed the first time so it
+  discovers the file; afterwards every game updates it live. Set
+  `signalrgb.custom_effect: false` to fall back to the static mood →
+  effect map. `signalrgb.effects_dir` overrides the target folder if needed
+  (OneDrive-redirected Documents folders are handled automatically).
