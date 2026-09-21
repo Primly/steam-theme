@@ -10,6 +10,8 @@
   "palette_mode": "colorful",
   "appearance_preference": "dark",
   "force_dark_mode": true,
+  "system_mode": "match",
+  "app_mode": "match",
 
   "ai": {
     "enabled": false,

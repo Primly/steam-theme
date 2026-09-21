@@ -187,20 +187,26 @@ def _hex_to_argb(hexcolor):
     return ABGR_OPAQUE | (r << 16) | (g << 8) | b
 
 
-def write_registry_colors(palette, log=print):
+def _resolve_mode(mode, appearance):
+    """mode: 'match' | 'dark' | 'light' -> concrete 'dark' | 'light'."""
+    return appearance if mode in (None, "match", "") else mode
+
+
+def write_registry_colors(palette, log=print, system_mode="match", app_mode="match"):
     accent = _hex_to_argb(palette["accent"])
-    light = 1 if palette["appearance"] == "light" else 0
+    sys_light = 1 if _resolve_mode(system_mode, palette["appearance"]) == "light" else 0
+    app_light = 1 if _resolve_mode(app_mode, palette["appearance"]) == "light" else 0
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
                           r"Software\Microsoft\Windows\DWM") as k:
         winreg.SetValueEx(k, "AccentColor", 0, winreg.REG_DWORD, accent)
         winreg.SetValueEx(k, "AccentColorInactive", 0, winreg.REG_DWORD,
-                          0xFF444444 if not light else 0xFFCCCCCC)
+                          0xFF444444 if not sys_light else 0xFFCCCCCC)
         winreg.SetValueEx(k, "ColorPrevalence", 0, winreg.REG_DWORD, 1)
         winreg.SetValueEx(k, "EnableWindowColorization", 0, winreg.REG_DWORD, 1)
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
                           r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
-        winreg.SetValueEx(k, "AppsUseLightTheme", 0, winreg.REG_DWORD, light)
-        winreg.SetValueEx(k, "SystemUsesLightTheme", 0, winreg.REG_DWORD, light)
+        winreg.SetValueEx(k, "AppsUseLightTheme", 0, winreg.REG_DWORD, app_light)
+        winreg.SetValueEx(k, "SystemUsesLightTheme", 0, winreg.REG_DWORD, sys_light)
         winreg.SetValueEx(k, "ColorPrevalence", 0, winreg.REG_DWORD, 1)
     # notify running apps of the personalization change
     HWND_BROADCAST, WM_SETTINGCHANGE = 0xFFFF, 0x001A
@@ -210,7 +216,9 @@ def write_registry_colors(palette, log=print):
         HWND_BROADCAST, WM_SETTINGCHANGE, 0, "ImmersiveColorSet",
         SMTO_ABORTIFHUNG, 500, ctypes.byref(result))
     log(f"  [reg] accent {palette['accent']} written, "
-        f"appearance={palette['appearance']}")
+        f"appearance={palette['appearance']} "
+        f"(system={'light' if sys_light else 'dark'}, "
+        f"apps={'light' if app_light else 'dark'})")
 
 
 # ---------------------------------------------------------------- .theme file

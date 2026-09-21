@@ -87,6 +87,22 @@
     </select>
   </div>
   <div class="row">
+    <label for="sysMode">Windows system mode</label>
+    <select id="sysMode">
+      <option value="match">Match theme</option>
+      <option value="dark">Always dark</option>
+      <option value="light">Always light</option>
+    </select>
+  </div>
+  <div class="row">
+    <label for="appMode">Default app mode</label>
+    <select id="appMode">
+      <option value="match">Match theme</option>
+      <option value="dark">Always dark</option>
+      <option value="light">Always light</option>
+    </select>
+  </div>
+  <div class="row">
     <label for="paletteMode">Palette style</label>
     <select id="paletteMode">
       <option value="colorful">Colorful (boosted saturation)</option>
@@ -419,6 +435,7 @@ function renderMonitors() {
 async function load() {
   cfg = await api("/api/config");
   setV("appearance", cfg.appearance_preference || (cfg.force_dark_mode ? "dark" : "auto"));
+  setV("sysMode", cfg.system_mode || "match"); setV("appMode", cfg.app_mode || "match");
   setV("paletteMode", cfg.palette_mode || "colorful");
   setV("poll", cfg.poll_interval_seconds ?? 30);
   setV("excludes", (cfg.exclude_appids || []).join(", "));
@@ -450,6 +467,7 @@ async function load() {
 async function save(apply) {
   cfg.appearance_preference = v("appearance");
   cfg.force_dark_mode = v("appearance") === "dark";   // back-compat
+  cfg.system_mode = v("sysMode"); cfg.app_mode = v("appMode");
   cfg.palette_mode = v("paletteMode");
   cfg.poll_interval_seconds = parseInt(v("poll")) || 30;
   cfg.exclude_appids = v("excludes").split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n));

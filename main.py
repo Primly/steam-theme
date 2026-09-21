@@ -143,8 +143,14 @@ def run_pipeline(cfg, game, log, dry_run=False):
         log("  [dry-run] skipping registry writes, theme apply, and extras")
         return {"theme_path": theme_path, "palette": pal, "wallpaper": wallpaper}
 
-    theme_mod.write_registry_colors(pal, log)
+    sys_mode = cfg.get("system_mode", "match")
+    app_mode = cfg.get("app_mode", "match")
+    theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
     theme_mod.apply_theme(theme_path, log)
+    # the theme engine applies its own mode defaults on launch — re-assert
+    # ours after it finishes so app/system modes land as configured
+    time.sleep(3)
+    theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
     extras.apply_windows_terminal(cfg, pal, theme_name, art.get("hero"), log)
     extras.apply_signalrgb(cfg, pal, mood, log)
     return {"theme_path": theme_path, "palette": pal, "wallpaper": wallpaper}
@@ -153,11 +159,27 @@ def run_pipeline(cfg, game, log, dry_run=False):
 def reapply(cfg, log):
     state = load_state(cfg)
     theme_path = state.get("theme_path")
-    if theme_path and os.path.exists(theme_path):
-        log("re-applying cached theme after unlock")
-        theme_mod.apply_theme(theme_path, log)
-    else:
+    if not (theme_path and os.path.exists(theme_path)):
         log("nothing to re-apply")
+        return
+    log("re-applying cached theme after unlock")
+    # palette.json sits next to the cached .theme; needed to re-assert the
+    # registry colors/modes that the theme engine clobbers on launch
+    pal = None
+    try:
+        with open(os.path.join(os.path.dirname(theme_path), "palette.json"),
+                  encoding="utf-8") as f:
+            pal = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        pass
+    sys_mode = cfg.get("system_mode", "match")
+    app_mode = cfg.get("app_mode", "match")
+    if pal:
+        theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
+    theme_mod.apply_theme(theme_path, log)
+    if pal:
+        time.sleep(3)
+        theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
 
 
 def check_once(cfg, log, force=False, appid_override=None, dry_run=False):
