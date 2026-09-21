@@ -197,8 +197,8 @@
         <option>Standard V2</option>
         <option>High Fidelity V2</option>
         <option>Low Resolution V2</option>
-        <option>Text &amp; Shapes</option>
-        <option>CG</option>
+        <option>Text Refine</option>
+        <option>CGI</option>
       </optgroup>
       <optgroup label="Generative (creative — reinterprets detail, ~1 credit / 2 MP)">
         <option>Bloom 2</option>
@@ -218,6 +218,11 @@
     <label for="topazPrompt" class="top">Prompt (generative)</label>
     <textarea id="topazPrompt" placeholder="{game} key art, {mood} atmosphere — placeholders filled per game; empty = Topaz autoprompt"></textarea>
   </div>
+  <div class="sub">Per-role overrides</div>
+  <p class="hint">e.g. Bloom 2 for heroes, Text Refine for logos/icons. Switching a model re-generates that role's upscale (cached per model).</p>
+  <div class="row"><label for="mHero">Hero</label><select id="mHero"></select></div>
+  <div class="row"><label for="mLogo">Logo</label><select id="mLogo"></select></div>
+  <div class="row"><label for="mIcon">Icon</label><select id="mIcon"></select></div>
 </section>
 
 <section>
@@ -290,6 +295,25 @@ async function runTest(kind, body, resultId) {
   const el = document.getElementById(resultId);
   el.className = "result info"; el.textContent = "testing…";
   showResult(resultId, await api("/api/test/" + kind, body));
+}
+
+const TOPAZ_GROUPS = {
+  "Precision (faithful, 1 cr / 24 MP)": ["Standard V2", "High Fidelity V2", "Low Resolution V2", "Text Refine", "CGI"],
+  "Generative (creative, ~1 cr / 2 MP)": ["Bloom 2", "Wonder 3", "Redefine", "Bloom Realism", "Recovery V2", "Standard MAX"],
+};
+function fillRoleSelect(id, current) {
+  const sel = document.getElementById(id);
+  sel.innerHTML = "";
+  const d = document.createElement("option");
+  d.value = ""; d.textContent = "Default (main model)"; sel.appendChild(d);
+  for (const [label, models] of Object.entries(TOPAZ_GROUPS)) {
+    const g = document.createElement("optgroup"); g.label = label;
+    models.forEach(m => {
+      const o = document.createElement("option"); o.value = m; o.textContent = m; g.appendChild(o);
+    });
+    sel.appendChild(g);
+  }
+  sel.value = current || "";
 }
 
 async function detectSteamId() {
@@ -385,6 +409,8 @@ async function load() {
   setC("upEnabled", up.enabled); setV("upProvider", up.provider || "topaz");
   setV("topazKey", (cfg.topaz || {}).api_key); setV("topazModel", (cfg.topaz || {}).model || "Standard V2");
   setV("topazCreativity", (cfg.topaz || {}).creativity ?? 3); setV("topazPrompt", (cfg.topaz || {}).prompt);
+  const tmodels = (cfg.topaz || {}).models || {};
+  fillRoleSelect("mHero", tmodels.hero); fillRoleSelect("mLogo", tmodels.logo); fillRoleSelect("mIcon", tmodels.icon);
   const wt = cfg.windows_terminal || {};
   setC("wtEnabled", wt.enabled); setC("wtBg", wt.set_background_image); setV("wtOpacity", wt.background_opacity ?? 0.25);
   const sg = cfg.signalrgb || {};
@@ -409,8 +435,13 @@ async function save(apply) {
             use_for: {theme_naming: document.getElementById("aiNaming").checked}};
   delete cfg.vlm; delete cfg.openrouter;
   cfg.upscaling = {enabled: document.getElementById("upEnabled").checked, provider: v("upProvider")};
+  const tmodels = {};
+  if (v("mHero")) tmodels.hero = v("mHero");
+  if (v("mLogo")) tmodels.logo = v("mLogo");
+  if (v("mIcon")) tmodels.icon = v("mIcon");
   cfg.topaz = {api_key: v("topazKey"), model: v("topazModel"),
-               creativity: parseInt(v("topazCreativity")) || 3, prompt: v("topazPrompt")};
+               creativity: parseInt(v("topazCreativity")) || 3, prompt: v("topazPrompt"),
+               models: tmodels};
   cfg.windows_terminal = {enabled: document.getElementById("wtEnabled").checked,
     set_background_image: document.getElementById("wtBg").checked,
     background_opacity: parseFloat(v("wtOpacity")) || 0.25};

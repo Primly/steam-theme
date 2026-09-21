@@ -112,7 +112,7 @@ def run_pipeline(cfg, game, log, dry_run=False):
             if role in ("logo", "icon"):  # centered roles only need the fit box
                 w, h = round(w * 0.8), round(h * 0.7)
             art[role] = upscale.maybe_upscale(art[role], w, h, cfg, log,
-                                              context=up_ctx)
+                                              context=up_ctx, role=role)
     pal["theme_name"] = theme_name
     pal["mood"] = mood
     log(f"  [pal] {pal['appearance']} mode, accent {pal['accent']} "

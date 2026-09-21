@@ -9,6 +9,7 @@ Results are cached next to the source as <role>_upscaled.jpg.
 """
 
 import os
+import re
 import time
 
 import requests
@@ -24,19 +25,30 @@ TOPAZ_GENERATIVE_MODELS = {
 }
 
 
+def _model_for(topaz, role):
+    """Per-role override (topaz.models.hero/logo/icon) falling back to topaz.model."""
+    return (topaz.get("models", {}).get(role)
+            or topaz.get("model") or "Standard V2")
+
+
+def _slug(s):
+    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
+
+
 def _needs_upscale(path, target_w, target_h):
     with Image.open(path) as im:
         w, h = im.size
     return (w < target_w or h < target_h), (w, h)
 
 
-def _topaz(src, dst, cfg, log, target_w, target_h, context=None, timeout_s=600):
+def _topaz(src, dst, cfg, log, target_w, target_h, context=None, role=None,
+           timeout_s=600):
     topaz = cfg.get("topaz", {})
     key = topaz.get("api_key")
     if not key:
         log("  [up] topaz selected but no API key configured")
         return None
-    model = topaz.get("model", "Standard V2")
+    model = _model_for(topaz, role)
     endpoint_pref = topaz.get("endpoint", "auto")
     generative = (endpoint_pref == "enhance-gen"
                   or (endpoint_pref == "auto" and model in TOPAZ_GENERATIVE_MODELS))
@@ -142,7 +154,8 @@ def _ai(src, dst, cfg, log, timeout_s=300):
         return None
 
 
-def maybe_upscale(path, target_w, target_h, cfg, log=print, context=None):
+def maybe_upscale(path, target_w, target_h, cfg, log=print, context=None,
+                  role=None):
     """Return an upscaled path if needed+configured, else the original path."""
     up = cfg.get("upscaling", {})
     if not up.get("enabled"):
@@ -150,12 +163,15 @@ def maybe_upscale(path, target_w, target_h, cfg, log=print, context=None):
     needed, (w, h) = _needs_upscale(path, target_w, target_h)
     if not needed:
         return path
-    dst = os.path.splitext(path)[0] + "_upscaled.png"
+    # cache key includes the effective model, so switching models regenerates
+    model = _model_for(cfg.get("topaz", {}), role) if up.get("provider") == "topaz" else "ai"
+    dst = os.path.splitext(path)[0] + f"_upscaled_{_slug(model)}.png"
     if os.path.exists(dst):
-        return dst  # one upscale per source image; never re-spend credits
-    log(f"  [up] {os.path.basename(path)} is {w}x{h}, target {target_w}x{target_h} — upscaling")
+        return dst  # one upscale per source+model; never re-spend credits
+    log(f"  [up] {os.path.basename(path)} is {w}x{h}, target {target_w}x{target_h}, "
+        f"model '{model}' — upscaling")
     if up.get("provider") == "topaz":
-        out = _topaz(path, dst, cfg, log, target_w, target_h, context)
+        out = _topaz(path, dst, cfg, log, target_w, target_h, context, role)
     else:
         out = _ai(path, dst, cfg, log)
     if out:
