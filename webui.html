@@ -65,6 +65,17 @@
 <main>
 
 <section>
+  <h2>Current theme</h2>
+  <p class="hint" id="curTheme">(loading…)</p>
+  <div class="row">
+    <button onclick="redo('reapply')" title="Re-applies the saved .theme file; no regeneration, no API calls, no credits">Re-apply</button>
+    <button onclick="redo('regenerate')" title="New VLM name + palette + wallpaper composite; reuses cached art and upscales (no credits)">Regenerate</button>
+    <button onclick="refetch()" title="Deletes cached art + upscales and re-creates everything">Full refetch</button>
+    <span class="hint" style="margin:0">Full refetch re-runs upscaling — may use Topaz credits.</span>
+  </div>
+</section>
+
+<section>
   <h2>General</h2>
   <p class="hint">Core behavior of the theme pipeline.</p>
   <div class="row">
@@ -418,6 +429,7 @@ async function load() {
   setV("srgbMap", JSON.stringify(sg.effect_map || {}, null, 2));
   renderMonitors();
   loadMonitors();
+  loadState();
   refreshLog();
   setInterval(refreshLog, 5000);
 }
@@ -464,6 +476,26 @@ async function save(apply) {
     st.textContent += " — " + (rr.detail || "");
     setTimeout(refreshLog, 3000);
   }
+}
+
+async function redo(mode) {
+  const r = await api("/api/redo", {mode});
+  document.getElementById("saveState").textContent = r.detail || "";
+  setTimeout(refreshLog, 3000);
+  setTimeout(loadState, 6000);
+}
+
+function refetch() {
+  if (confirm("Full refetch deletes the cached art and upscales for the current game and re-creates them — Topaz credits may be used. Continue?"))
+    redo("refetch");
+}
+
+async function loadState() {
+  const s = await api("/api/state");
+  const el = document.getElementById("curTheme");
+  el.textContent = s.last_appid
+    ? `${s.last_name} (${s.last_appid}) — theme “${s.theme_name || "unnamed"}”`
+    : "no theme applied yet";
 }
 
 async function refreshLog() {

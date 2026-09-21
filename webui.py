@@ -175,6 +175,19 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/detect-steamid":
             import steamdetect
             self._send(200, {"steam_id64": steamdetect.get_steam_id64()})
+        elif path == "/api/state":
+            import main as app
+            cfg = app.load_config()
+            state = app.load_state(cfg)
+            state["theme_name"] = None
+            pal = os.path.join(BASE_DIR, cfg.get("cache_dir", "cache"),
+                               str(state.get("last_appid") or ""), "palette.json")
+            try:
+                with open(pal, encoding="utf-8") as f:
+                    state["theme_name"] = json.load(f).get("theme_name")
+            except (OSError, json.JSONDecodeError):
+                pass
+            self._send(200, state)
         elif path == "/api/log":
             import urllib.parse
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -210,6 +223,31 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, fn(body))
             except Exception as e:
                 self._send(200, {"ok": False, "error": str(e)})
+        elif path == "/api/redo":
+            mode = body.get("mode", "regenerate")
+
+            def work():
+                import shutil
+                import main as app
+                cfg = app.load_config()
+                log = app._log_factory(cfg)
+                state = app.load_state(cfg)
+                appid = state.get("last_appid")
+                try:
+                    if mode == "reapply":
+                        app.reapply(cfg, log)
+                        return
+                    if mode == "refetch" and appid:
+                        shutil.rmtree(os.path.join(
+                            BASE_DIR, cfg.get("cache_dir", "cache"), str(appid)),
+                            ignore_errors=True)
+                        log(f"redo: cleared cache for appid {appid} "
+                            "(art + upscales will be re-created)")
+                    app.check_once(cfg, log, force=True)
+                except Exception as e:
+                    log(f"redo error: {e}")
+            threading.Thread(target=work, daemon=True).start()
+            self._send(200, {"ok": True, "detail": f"{mode} started; watch the log"})
         elif path == "/api/run-now":
             def work():
                 import main as app

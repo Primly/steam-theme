@@ -88,6 +88,12 @@ def apply_signalrgb(cfg, palette, mood, log=print):
                     e.get("links", {}).get("apply")) for e in items]
         match = next(((n, link) for n, link in effects
                       if link and wanted.lower() in n.lower()), None)
+        if not match and wanted != effect_map.get("default"):
+            # mapped effect missing (e.g. not installed): try the default
+            log(f"  [srgb] {wanted!r} not installed, falling back to default")
+            wanted = effect_map.get("default", "Solid Color")
+            match = next(((n, link) for n, link in effects
+                          if link and wanted.lower() in n.lower()), None)
         if not match:
             log(f"  [srgb] no effect matching {wanted!r}; "
                 f"available: {[n for n, _ in effects][:8]}")
