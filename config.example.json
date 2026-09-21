@@ -38,11 +38,7 @@
     "custom_effect": true,
     "effect_style": "gradient",
     "effects_dir": "",
-    "effect_map": {
-      "default": "Solid Color",
-      "neon": "Rainbow Wave",
-      "dark fantasy": "Ember"
-    }
+    "fallback_effect": "Solid Color"
   },
   "windows_terminal": {
     "enabled": true,

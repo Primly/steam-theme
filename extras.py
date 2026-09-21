@@ -107,22 +107,22 @@ def write_signalrgb_effect(cfg, palette, log=print):
         return None
 
 
-def apply_signalrgb(cfg, palette, mood, log=print):
-    """Apply a SignalRGB effect over its local REST API, choosing the effect
-    from signalrgb.effect_map by mood keyword. Endpoint layout can vary by
-    SignalRGB version — adjust here if your install differs."""
+def apply_signalrgb(cfg, palette, log=print):
+    """Write the palette-skinned custom effect and apply it over SignalRGB's
+    local REST API. Falls back to the named stock effect when the custom one
+    isn't registered yet, or when custom_effect is disabled. Endpoint layout
+    can vary by SignalRGB version — adjust here if your install differs."""
     srgb = cfg.get("signalrgb", {})
     if not srgb.get("enabled"):
         return
     import requests
     base = srgb.get("base_url", "http://localhost:16038").rstrip("/")
-    effect_map = srgb.get("effect_map", {})
-    wanted = effect_map.get("default", "Solid Color")
-    for key, val in effect_map.items():
-        if key != "default" and mood and key in mood.lower():
-            wanted = val
-            break
-    # palette-driven custom effect takes priority over the static mood map
+    # fallback_effect replaced the old mood->effect map; honor its "default"
+    # entry if an old config still has one
+    fallback = (srgb.get("fallback_effect")
+                or srgb.get("effect_map", {}).get("default")
+                or "Solid Color")
+    # palette-driven custom effect takes priority over the named fallback
     custom_title = None
     if srgb.get("custom_effect", True):
         custom_title = write_signalrgb_effect(cfg, palette, log)
@@ -137,17 +137,15 @@ def apply_signalrgb(cfg, palette, mood, log=print):
             return next(((n, link) for n, link in effects
                          if link and name.lower() in n.lower()), None)
 
-        # priority: custom palette effect -> mood-mapped effect -> default
+        # priority: custom palette effect -> named fallback
         match = find(custom_title) if custom_title else None
         if custom_title and not match:
             log(f"  [srgb] custom effect not registered yet — restart SignalRGB "
-                f"once to discover it; using mood map for now")
+                f"once to discover it; using fallback for now")
         if not match:
-            match = find(wanted)
-        if not match and wanted != effect_map.get("default"):
-            log(f"  [srgb] {wanted!r} not installed, falling back to default")
-            match = find(effect_map.get("default", "Solid Color"))
+            match = find(fallback)
         if not match:
+            log(f"  [srgb] fallback effect {fallback!r} not installed")
             log(f"  [srgb] no usable effect; available: {[n for n, _ in effects][:8]}")
             return
         name, apply_link = match

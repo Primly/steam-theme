@@ -164,13 +164,14 @@ pickers (plus style controls like speed) in SignalRGB's Customize page —
 you can tweak them live, and they'll be re-skinned when the next game's
 theme applies.
 
-### Fallback chain & the mood map
+### Fallback effect
 
-If the custom effect can't be used (e.g. first run before the discovery
-restart), the pipeline falls back to: **mood-mapped effect**
-(`signalrgb.effect_map`, e.g. `"neon": "Rainbow Wave"` matches a VLM mood of
-"neon cyberpunk") → **`default` effect**. Set `custom_effect: false` to skip
-generation entirely and always use the mood map.
+If the custom effect can't be applied (e.g. first run before the discovery
+restart), the pipeline falls back to the stock effect named in
+`signalrgb.fallback_effect` (default `"Solid Color"`). Set
+`custom_effect: false` to skip generation entirely and always apply that
+named effect instead — useful if you'd rather keep a stock Pro effect (say,
+an audio visualizer) than the generated one.
 
 ### Keypress-reactive (keytap) layer
 

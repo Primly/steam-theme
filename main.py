@@ -152,7 +152,7 @@ def run_pipeline(cfg, game, log, dry_run=False):
     time.sleep(3)
     theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
     extras.apply_windows_terminal(cfg, pal, theme_name, art.get("hero"), log)
-    extras.apply_signalrgb(cfg, pal, mood, log)
+    extras.apply_signalrgb(cfg, pal, log)
     return {"theme_path": theme_path, "palette": pal, "wallpaper": wallpaper}
 
 

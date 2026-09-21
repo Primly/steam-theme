@@ -280,8 +280,9 @@
   </div>
   <p class="hint">All generated styles include a keypress layer (rings flash from the pressed key) — toggleable per effect in SignalRGB's Customize page. Keypress input needs SignalRGB Pro and a keyboard/keypad device.</p>
   <div class="row">
-    <label for="srgbMap" class="top">SignalRGB mood → effect map (JSON)</label>
-    <textarea id="srgbMap"></textarea>
+    <label for="srgbFallback">Fallback effect</label>
+    <input id="srgbFallback" type="text" placeholder="Solid Color">
+    <span class="hint" style="margin:0">Stock effect used until the generated one is registered — or instead of it, if generation is off.</span>
   </div>
 </section>
 
@@ -457,7 +458,7 @@ async function load() {
   const sg = cfg.signalrgb || {};
   setC("srgbEnabled", sg.enabled); setC("srgbCustom", sg.custom_effect !== false);
   setV("srgbStyle", sg.effect_style || "gradient"); setV("srgbBase", sg.base_url || "http://localhost:16038");
-  setV("srgbMap", JSON.stringify(sg.effect_map || {}, null, 2));
+  setV("srgbFallback", sg.fallback_effect || (sg.effect_map || {}).default || "Solid Color");
   renderMonitors();
   loadMonitors();
   loadState();
@@ -489,11 +490,9 @@ async function save(apply) {
   cfg.windows_terminal = {enabled: document.getElementById("wtEnabled").checked,
     set_background_image: document.getElementById("wtBg").checked,
     background_opacity: parseFloat(v("wtOpacity")) || 0.25};
-  let emap = {};
-  try { emap = JSON.parse(v("srgbMap") || "{}"); } catch (e) { alert("SignalRGB effect map is not valid JSON"); return; }
   cfg.signalrgb = {enabled: document.getElementById("srgbEnabled").checked, base_url: v("srgbBase"),
                    custom_effect: document.getElementById("srgbCustom").checked,
-                   effect_style: v("srgbStyle"), effect_map: emap};
+                   effect_style: v("srgbStyle"), fallback_effect: v("srgbFallback") || "Solid Color"};
   const mons = [];
   document.querySelectorAll("[data-mon]").forEach(el => {
     const i = +el.dataset.mon;
