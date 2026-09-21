@@ -29,7 +29,7 @@ import theme as theme_mod
 import upscale
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 
 def safe_join(base, *parts):
@@ -240,12 +240,18 @@ def reapply_from_cache(cfg, log, cache_key):
     extras.apply_windows_terminal(cfg, pal, pal.get("theme_name") or cache_key,
                                   pal.get("wallpaper"), log)
     extras.apply_signalrgb(cfg, pal, log)
-    # point state at this theme; identity = cache key so the poller doesn't
-    # immediately undo the manual choice
+    # point state at this theme and set a manual hold: the poller keeps
+    # this theme until the user actually plays a (different) game, instead of
+    # reverting to the last-played game on the next poll
     state = load_state(cfg)
     state.update({"theme_path": theme_path, "last_cache_key": cache_key,
                   "last_identity": cache_key,
-                  "last_name": pal.get("theme_name") or cache_key})
+                  "last_name": pal.get("theme_name") or cache_key,
+                  "manual_hold": {
+                      "identity": cache_key,
+                      "name": (pal.get("game_name") or pal.get("theme_name")
+                               or cache_key),
+                      "held_at": time.time()}})
     try:
         state["last_appid"] = int(cache_key)
     except ValueError:
@@ -322,6 +328,51 @@ def check_once(cfg, log, force=False, appid_override=None, dry_run=False):
     appid = game.get("appid")
     cache_key = game.get("cache_key") or str(appid)
     identity = cache_key  # one theme per game regardless of play timestamps
+
+    # A theme manually applied from the web UI gallery sets a "hold" so the
+    # poller doesn't immediately revert it to the last-played game. The hold
+    # releases as soon as the user actually plays something: a running game
+    # is detected, or Steam reports a last-played time newer than the hold.
+    hold = state.get("manual_hold")
+    held = str(hold.get("identity") or "") if isinstance(hold, dict) else ""
+    if held and not appid_override:
+        if identity == held:
+            # the held game is what's detected now — the hold did its job
+            state.pop("manual_hold", None)
+            save_state(cfg, state)
+        elif force:
+            # a forced re-run (UI redo buttons) targets the theme the user is
+            # looking at, not whatever Steam last-played happens to report
+            try:
+                held_appid = int(held)
+            except ValueError:  # custom_<slug> key
+                held_appid = None
+            held_game = (next((g for g in games if g["appid"] == held_appid), None)
+                         if held_appid is not None else None)
+            game = dict(held_game or {"appid": held_appid,
+                                      "name": hold.get("name") or held,
+                                      "rtime_last_played": 0,
+                                      "icon_url": None})
+            if held_appid is None:
+                game["cache_key"] = held
+            appid = game.get("appid")
+            cache_key = identity = held
+            source = "manual-hold"
+            log(f"manual theme hold: re-running held theme "
+                f"'{hold.get('name') or held}' (detected game ignored)")
+        else:
+            running = source in ("now-playing", "custom-process")
+            played_since = (game.get("rtime_last_played") or 0) > \
+                           (hold.get("held_at") or 0)
+            if running or played_since:
+                log(f"manual theme hold released — {source}: {game['name']}")
+                state.pop("manual_hold", None)
+                save_state(cfg, state)
+            else:
+                log(f"manual theme hold: keeping '{hold.get('name') or held}' "
+                    f"(detected {game['name']} was not played since the hold)")
+                return
+
     key = f"{source}:{identity}"
     if game.get("rtime_last_played"):
         ts = datetime.fromtimestamp(game["rtime_last_played"], timezone.utc)
@@ -343,6 +394,7 @@ def check_once(cfg, log, force=False, appid_override=None, dry_run=False):
 
     result = run_pipeline(cfg, game, log, dry_run=dry_run)
     if result and not dry_run:
+        state.pop("manual_hold", None)  # theming caught up with detection
         state.update({"last_key": key, "last_identity": identity,
                       "last_appid": appid, "last_cache_key": cache_key,
                       "last_name": game["name"],

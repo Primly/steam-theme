@@ -410,6 +410,28 @@ class Handler(BaseHTTPRequestHandler):
                     log(f"gallery apply error: {e}")
             threading.Thread(target=work, daemon=True).start()
             self._send(200, {"ok": True, "detail": f"applying '{key}'; watch the log"})
+        elif path == "/api/release-hold":
+            def work():
+                import main as app
+                cfg = app.load_config()
+                log = app._log_factory(cfg)
+                state = app.load_state(cfg)
+                hold = state.pop("manual_hold", None)
+                if not hold:
+                    log("release-hold: no manual theme hold was active")
+                    return
+                app.save_state(cfg, state)
+                log(f"manual theme hold released "
+                    f"('{hold.get('name') or hold.get('identity')}') — "
+                    "auto-theming resumed")
+                try:
+                    app.check_once(cfg, log)  # catch up to the last-played game
+                except Exception as e:
+                    log(f"release-hold check error: {e}")
+            threading.Thread(target=work, daemon=True).start()
+            self._send(200, {"ok": True,
+                             "detail": "auto-theming resumed; catching up to "
+                                       "your last-played game"})
         elif path == "/api/restore":
             def work():
                 import main as app

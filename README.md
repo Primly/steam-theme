@@ -174,9 +174,22 @@ python main.py                   # polling service (every 30s)
 - **Extras** — Windows Terminal + SignalRGB toggles.
 - **Monitors** — auto-detected display list with per-display role mapping.
 - **Theme gallery** — every cached game theme with thumbnails; re-apply any
-  of them instantly (no API calls, no Topaz credits).
+  of them instantly (no API calls, no Topaz credits). Applying one sets a
+  **manual hold** so auto-theming doesn't immediately revert it — see below.
 - **Activity log** — live tail of `service.log`; "Save & apply now" re-runs
   the pipeline immediately.
+
+### Manual theme selection (holds)
+
+Picking a theme from the gallery applies it and sets a **manual hold**: the
+background service keeps that theme instead of reverting to your last-played
+game on its next poll. The hold releases automatically — and normal
+auto-theming resumes — the moment you actually play something (a game is
+detected running, or Steam reports a game played after the hold was set).
+The config page shows a banner while a hold is active, with a **Resume
+auto-theming now** button if you want to release it yourself. The Re-apply /
+Regenerate / Full refetch buttons also respect the hold: they re-run the
+held theme, not whatever Steam happens to report as last-played.
 
 ### Undo: Restore Windows look
 

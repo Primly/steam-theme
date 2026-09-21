@@ -77,6 +77,7 @@
 <section>
   <h2>Current theme</h2>
   <p class="hint" id="curTheme">(loading…)</p>
+  <p class="hint" id="holdNote" style="display:none"></p>
   <div class="row">
     <button onclick="redo('reapply')" title="Re-applies the saved .theme file; no regeneration, no API calls, no credits">Re-apply</button>
     <button onclick="redo('regenerate')" title="New VLM name + palette + wallpaper composite; reuses cached art and upscales (no credits)">Regenerate</button>
@@ -327,7 +328,8 @@
 
 <section>
   <h2>Theme gallery</h2>
-  <p class="hint">Every game theme in the local cache. Re-apply one instantly — no API calls, no Topaz credits.</p>
+  <p class="hint">Every game theme in the local cache. Re-apply one instantly — no API calls, no Topaz credits.
+    Applying one pauses auto-theming until you play another game (a “manual hold”).</p>
   <div id="gallery"></div>
 </section>
 
@@ -598,6 +600,24 @@ async function loadState() {
     ? `${s.last_name} (${s.last_appid || s.last_cache_key}) — theme “${s.theme_name || "unnamed"}”`
     : "no theme applied yet";
   document.getElementById("ver").textContent = s.version ? "v" + s.version : "";
+  const holdEl = document.getElementById("holdNote");
+  holdEl.textContent = "";
+  if (s.manual_hold && s.manual_hold.identity) {
+    holdEl.style.display = "";
+    holdEl.append(`Manual theme “${s.manual_hold.name || s.manual_hold.identity}” is held — auto-theming is paused and resumes ` +
+      "automatically when you launch or play another game. ");
+    const btn = document.createElement("button");
+    btn.textContent = "Resume auto-theming now";
+    btn.onclick = async () => {
+      btn.disabled = true;
+      const r = await api("/api/release-hold", {});
+      document.getElementById("saveState").textContent = r.detail || "";
+      setTimeout(() => { loadState(); loadGallery(); refreshLog(); }, 3000);
+    };
+    holdEl.appendChild(btn);
+  } else {
+    holdEl.style.display = "none";
+  }
 }
 
 async function restoreLook() {
