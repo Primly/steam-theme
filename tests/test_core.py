@@ -14,10 +14,15 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import main  # noqa: E402
-import theme  # noqa: E402
+import wallpaper  # noqa: E402
 import extras  # noqa: E402
 import srgb_effects  # noqa: E402
 import steamdetect  # noqa: E402
+
+if sys.platform == "win32":
+    import theme  # noqa: E402  (Windows-only module)
+else:
+    theme = None
 
 
 class TestPathSandbox(unittest.TestCase):
@@ -35,10 +40,23 @@ class TestPathSandbox(unittest.TestCase):
     def test_safe_join_rejects_absolute(self):
         base = tempfile.mkdtemp()
         with self.assertRaises(ValueError):
-            main.safe_join(base, "C:\\Windows\\System32\\drivers")
+            # filesystem root is absolute on every platform
+            main.safe_join(base, os.path.abspath(os.sep))
+
+    def test_safe_join_windows_separators(self):
+        # Windows-only: backslash is a separator there, so '..\\..' escapes.
+        # On Linux backslashes are ordinary filename characters — the path
+        # stays inside base, which is still safe (just a weird filename).
+        base = tempfile.mkdtemp()
+        if sys.platform == "win32":
+            with self.assertRaises(ValueError):
+                main.safe_join(base, "..\\..\\evil")
+        else:
+            self.assertTrue(main.safe_join(base, "..\\..\\evil")
+                            .startswith(base))
 
     def test_cfg_path_falls_back_to_default(self):
-        cfg = {"cache_dir": "..\\..\\evil"}
+        cfg = {"cache_dir": os.path.join("..", "..", "evil")}
         self.assertEqual(main.cfg_path(cfg, "cache_dir", "cache"),
                          os.path.join(main.BASE_DIR, "cache"))
 
@@ -52,15 +70,17 @@ class TestIniSanitizer(unittest.TestCase):
     def test_strips_newlines(self):
         # a VLM theme name must not be able to inject INI keys
         evil = "Nice Theme\r\n[Control Panel\\Desktop]\r\nSCRNSAVE.EXE=C:\\x.scr"
-        out = theme._ini_safe(evil)
+        out = wallpaper._ini_safe(evil)
         self.assertNotIn("\n", out)
         self.assertNotIn("\r", out)
 
     def test_strips_control_chars_and_limits_length(self):
-        out = theme._ini_safe("ok\x00\x1f" + "a" * 500)
+        out = wallpaper._ini_safe("ok\x00\x1f" + "a" * 500)
         self.assertLessEqual(len(out), 128)
         self.assertNotIn("\x00", out)
 
+    @unittest.skipUnless(sys.platform == "win32",
+                         "theme.py is the Windows-only implementation")
     def test_theme_file_has_no_injected_lines(self):
         pal = {"accent": "#AABBCC"}
         with tempfile.TemporaryDirectory() as d:
@@ -252,15 +272,16 @@ class TestReapplyFromCacheHold(unittest.TestCase):
                "log_file": os.path.join(rel, "service.log")}
         cache = os.path.join(tmp, "440")
         os.makedirs(cache)
-        with open(os.path.join(cache, "theme.theme"), "w") as f:
+        with open(os.path.join(cache, main.theme_mod.THEME_FILENAME),
+                  "w") as f:
             f.write("[Theme]")
         with open(os.path.join(cache, "palette.json"), "w") as f:
             json.dump({"theme_name": "Ashen Vigil", "game_name": "Witcher 3"},
                       f)
         with mock.patch.object(main.theme_mod, "write_registry_colors"), \
                 mock.patch.object(main.theme_mod, "apply_theme"), \
-                mock.patch.object(main.extras, "apply_windows_terminal"), \
-                mock.patch.object(main.extras, "apply_signalrgb"), \
+                mock.patch.object(main.extras, "apply_terminal"), \
+                mock.patch.object(main.extras, "apply_rgb"), \
                 mock.patch.object(main.time, "sleep"):
             main.reapply_from_cache(cfg, lambda m: None, "440")
         state = main.load_state(cfg)

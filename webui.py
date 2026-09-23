@@ -18,6 +18,7 @@ API:
 
 import json
 import os
+import sys
 import threading
 import time
 import webbrowser
@@ -279,8 +280,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, load_config())
         elif path == "/api/monitors":
             try:
-                import theme as theme_mod
-                self._send(200, {"ok": True, "monitors": theme_mod.enumerate_monitors()})
+                import main as app
+                self._send(200, {"ok": True,
+                                 "monitors": app.theme_mod.enumerate_monitors()})
             except Exception as e:
                 self._send(200, {"ok": False, "error": str(e), "monitors": []})
         elif path == "/api/detect-steamid":
@@ -291,6 +293,7 @@ class Handler(BaseHTTPRequestHandler):
             cfg = app.load_config()
             state = app.load_state(cfg)
             state["version"] = app.__version__
+            state["platform"] = sys.platform
             state["theme_name"] = None
             cache_key = str(state.get("last_cache_key")
                             or state.get("last_appid") or "")
@@ -435,10 +438,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/restore":
             def work():
                 import main as app
-                import theme as theme_mod
                 log = app._log_factory(app.load_config())
                 try:
-                    theme_mod.restore_windows_look(log)
+                    app.theme_mod.restore_windows_look(log)
                 except FileNotFoundError:
                     log("restore: no snapshot found "
                         "(windows_backup.json missing — nothing was ever applied?)")

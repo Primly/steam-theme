@@ -1,4 +1,8 @@
-"""Extra app theming: Windows Terminal color scheme + SignalRGB lighting.
+"""Extra app theming: terminal color scheme + RGB lighting.
+
+Platform dispatch:
+  apply_terminal -> Windows Terminal (Windows) / Konsole (Linux)
+  apply_rgb      -> SignalRGB (Windows) / OpenRGB SDK (Linux)
 
 Both are best-effort: failures are logged, never fatal.
 
@@ -12,7 +16,23 @@ and apply instantly.
 
 import json
 import os
-import winreg
+import sys
+
+
+def apply_terminal(cfg, palette, theme_name, wallpaper_path, log=print):
+    """Theme the platform's terminal with the palette."""
+    if sys.platform == "win32":
+        return apply_windows_terminal(cfg, palette, theme_name,
+                                      wallpaper_path, log)
+    return apply_konsole(cfg, palette, theme_name, log)
+
+
+def apply_rgb(cfg, palette, log=print):
+    """Sync RGB lighting with the palette."""
+    if sys.platform == "win32":
+        return apply_signalrgb(cfg, palette, log)
+    import openrgb_sync
+    return openrgb_sync.apply_openrgb(cfg, palette, log)
 
 SRGB_EFFECT_TITLE = "Steam Theme"
 SRGB_LEGACY_TITLES = ("Steam Wallpaper",)  # pre-rename; cleaned up on write
@@ -98,6 +118,7 @@ def apply_windows_terminal(cfg, palette, theme_name, wallpaper_path, log=print):
 
 def _documents_dir():
     """Real Documents folder (handles OneDrive redirection)."""
+    import winreg  # lazy: extras.py must import cleanly on Linux
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                              r"Software\Microsoft\Windows\CurrentVersion"
@@ -144,6 +165,79 @@ def write_signalrgb_effect(cfg, palette, log=print):
     except OSError as e:
         log(f"  [srgb] could not write custom effect: {e}")
         return None
+
+
+# ------------------------------------------------------------------ Konsole
+
+_KONSOLE_DIR = os.path.expanduser("~/.local/share/konsole")
+_KONSOLE_PROFILE = "Steam Theme.profile"
+
+
+def _hex_to_rgb_csv(hexcolor):
+    """'#66C0F4' -> '102,192,244'. Raises ValueError on anything else —
+    palette data flows into an INI-like file here, so validate hard."""
+    import re as _re
+    if not _re.fullmatch(r"#[0-9a-fA-F]{6}", str(hexcolor)):
+        raise ValueError(f"not a #RRGGBB color: {hexcolor!r}")
+    h = str(hexcolor).lstrip("#")
+    return f"{int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)}"
+
+
+def render_konsole_colorscheme(name, palette):
+    """Konsole .colorscheme file content built from the theme palette.
+    Slot mapping mirrors the Windows Terminal scheme: Color0-7 from the
+    palette's first 8 colors, Intense variants from the next 8."""
+    from wallpaper import _ini_safe
+    colors = (list(palette.get("colors")) + list(palette.get("colors")))[:16]
+    bg = _hex_to_rgb_csv(palette["background"])
+    fg = "232,232,232" if palette.get("appearance") == "dark" else "26,26,26"
+    lines = ["[Background]", f"Color={bg}", "",
+             "[Foreground]", f"Color={fg}", ""]
+    for i in range(8):
+        lines += [f"[Color{i}]", f"Color={_hex_to_rgb_csv(colors[i])}", ""]
+    for i in range(8):
+        lines += [f"[Color{i}Intense]",
+                  f"Color={_hex_to_rgb_csv(colors[i + 8])}", ""]
+    lines += ["[General]", f"Description={_ini_safe(name)}",
+              "Opacity=1", "Wallpaper=", ""]
+    return "\n".join(lines)
+
+
+def apply_konsole(cfg, palette, theme_name, log=print):
+    """Write a palette colorscheme + a 'Steam Theme' profile pointing at it,
+    and (optionally) make that profile Konsole's default. Konsole reloads
+    colorscheme files live; new windows pick up the default profile."""
+    k = cfg.get("konsole", {})
+    if not k.get("enabled"):
+        return
+    scheme = _safe_title_name(theme_name)
+    try:
+        content = render_konsole_colorscheme(scheme, palette)
+    except (ValueError, KeyError) as e:
+        log(f"  [konsole] unusable palette colors: {e}")
+        return
+    try:
+        os.makedirs(_KONSOLE_DIR, exist_ok=True)
+        with open(os.path.join(_KONSOLE_DIR, f"{scheme}.colorscheme"),
+                  "w", encoding="utf-8") as f:
+            f.write(content)
+        with open(os.path.join(_KONSOLE_DIR, _KONSOLE_PROFILE),
+                  "w", encoding="utf-8") as f:
+            f.write("[Appearance]\nColorScheme=" + scheme + "\n\n"
+                    "[General]\nName=Steam Theme\nParent=FALLBACK/\n")
+    except OSError as e:
+        log(f"  [konsole] could not write colorscheme/profile: {e}")
+        return
+    log(f"  [konsole] colorscheme '{scheme}' applied to the Steam Theme profile")
+    if k.get("set_default_profile", True):
+        import subprocess
+        try:
+            subprocess.run(["kwriteconfig6", "--file", "konsolerc",
+                            "--group", "Desktop Entry",
+                            "--key", "DefaultProfile", _KONSOLE_PROFILE],
+                           capture_output=True, timeout=15)
+        except (OSError, subprocess.SubprocessError) as e:
+            log(f"  [konsole] could not set default profile: {e}")
 
 
 def apply_signalrgb(cfg, palette, log=print):

@@ -15,9 +15,14 @@ import os
 import subprocess
 import winreg
 
-from PIL import Image, ImageEnhance, ImageFilter
+# shared compositing lives in wallpaper.py (platform-agnostic); re-exported
+# here so existing imports (main.py, tests) keep working
+from wallpaper import (  # noqa: F401
+    assign_roles, compose_monitor_tile, compose_wallpaper, _ini_safe,
+)
 
 ABGR_OPAQUE = 0xFF000000
+THEME_FILENAME = "theme.theme"
 
 
 # ------------------------------------------------------------ monitor layout
@@ -74,101 +79,6 @@ def enumerate_monitors():
             "primary": bool(info.get("Flags", 0) & 1),
         })
     return monitors
-
-
-def assign_roles(monitors, mapping, log=print):
-    """Attach a 'role' (hero/logo/icon) to each monitor.
-
-    Config matches win by substring against the monitor description;
-    unmatched monitors default by size: largest=hero, second=logo, third=icon.
-    """
-    defaults = ["hero", "logo", "icon"]
-    by_area = sorted(monitors, key=lambda m: (m["rect"][2] - m["rect"][0])
-                     * (m["rect"][3] - m["rect"][1]), reverse=True)
-    for i, m in enumerate(by_area):
-        m["role"] = defaults[i] if i < len(defaults) else "hero"
-    for entry in mapping:
-        needle = entry["match"].lower()
-        for m in monitors:
-            if needle in m["desc"].lower() or needle in m["device"].lower():
-                m["role"] = entry["role"]
-    for m in monitors:
-        log(f"  [mon] {m['device']} {m['desc']!r} "
-            f"{m['rect'][2]-m['rect'][0]}x{m['rect'][3]-m['rect'][1]} -> {m['role']}")
-    return monitors
-
-
-# ------------------------------------------------------------- compositing
-
-def _cover(img, w, h):
-    """Resize+center-crop so img exactly fills w x h."""
-    iw, ih = img.size
-    scale = max(w / iw, h / ih)
-    img = img.resize((max(1, round(iw * scale)), max(1, round(ih * scale))),
-                     Image.LANCZOS)
-    x = (img.size[0] - w) // 2
-    y = (img.size[1] - h) // 2
-    return img.crop((x, y, x + w, y + h))
-
-
-def _fit(img, w, h, max_upscale=3.0):
-    """Resize to fit inside w x h, preserving aspect (limited upscaling)."""
-    iw, ih = img.size
-    scale = min(min(w / iw, h / ih), max_upscale)
-    return img.resize((max(1, round(iw * scale)), max(1, round(ih * scale))),
-                     Image.LANCZOS)
-
-
-def _has_transparency(img):
-    if img.mode in ("RGBA", "LA"):
-        lo, _hi = img.getchannel("A").getextrema()
-        return lo < 250
-    return img.mode == "P" and "transparency" in img.info
-
-
-def _centered_on_backdrop(img, hero, w, h):
-    """For logos/icons: darkened blurred hero backdrop + art centered."""
-    backdrop = _cover(hero.copy(), w, h).filter(ImageFilter.GaussianBlur(24))
-    backdrop = ImageEnhance.Brightness(backdrop).enhance(0.4)
-    fg = _fit(img.convert("RGBA"), round(w * 0.8), round(h * 0.7))
-    x, y = (w - fg.size[0]) // 2, (h - fg.size[1]) // 2
-    backdrop.paste(fg, (x, y), fg)
-    return backdrop.convert("RGB")
-
-
-def compose_wallpaper(monitors, art, out_path, log=print):
-    min_x = min(m["rect"][0] for m in monitors)
-    min_y = min(m["rect"][1] for m in monitors)
-    max_x = max(m["rect"][2] for m in monitors)
-    max_y = max(m["rect"][3] for m in monitors)
-    W, H = max_x - min_x, max_y - min_y
-
-    hero = art.get("hero") or next(iter(art.values()))
-    canvas = _cover(Image.open(hero).convert("RGB"), W, H)  # fills any gaps
-
-    for m in monitors:
-        src = art.get(m["role"]) or hero
-        l, t, r, b = m["rect"]
-        w, h = r - l, b - t
-        img = Image.open(src)
-        iw, ih = img.size
-        # scene art covers its monitor; logos/icons (transparent, oddly
-        # proportioned, or small) get centered on a blurred hero backdrop
-        covers = (iw >= w * 0.6 and ih >= h * 0.6
-                  and abs((iw / ih) / (w / h) - 1) < 0.35)
-        centered = (m["role"] in ("logo", "icon") and src != hero
-                    and (_has_transparency(img) or not covers))
-        if centered:
-            log(f"  [wall] {m['role']} art is transparent/small -> centered treatment")
-            tile = _centered_on_backdrop(img, Image.open(hero).convert("RGB"), w, h)
-        else:
-            tile = _cover(img.convert("RGB"), w, h)
-        canvas.paste(tile, (l - min_x, t - min_y))
-
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    canvas.save(out_path, "JPEG", quality=92)
-    log(f"  [wall] composed {W}x{H} span wallpaper -> {out_path}")
-    return out_path
 
 
 # ------------------------------------------------- original-look snapshot
@@ -326,14 +236,6 @@ MTSM=DABJDKT
 """
 
 
-def _ini_safe(text, limit=128):
-    """Strip control characters from a value headed for a .theme INI file.
-    A theme name containing a newline could otherwise inject extra INI keys
-    (e.g. a screensaver path) into the file. Theme names can come from a
-    VLM, so treat them as untrusted."""
-    return "".join(ch for ch in str(text) if 32 <= ord(ch) < 127)[:limit]
-
-
 def write_theme_file(path, display_name, wallpaper_path, palette):
     # .theme INI is safest as ASCII; strip any fancy characters from game names
     display_name = _ini_safe(display_name.encode("ascii", "replace").decode())
@@ -347,11 +249,14 @@ def write_theme_file(path, display_name, wallpaper_path, palette):
     return path
 
 
-def apply_theme(theme_path, log=print):
+def apply_theme(theme_path, log=print, cfg=None):
     """Apply by 'double-clicking' the .theme file; Windows performs the full
     visual transition. Note: applying while the workstation is LOCKED can
     produce a half-applied 'hybrid Custom' theme — the scheduled task includes
-    an on-unlock trigger that re-runs with --reapply."""
+    an on-unlock trigger that re-runs with --reapply.
+
+    cfg is unused on Windows (linux_theme needs it for monitor role mapping).
+    """
     # A lingering Settings window (from a previous .theme launch) silently
     # swallows subsequent launches — close it first so the apply lands.
     subprocess.run(["taskkill", "/F", "/IM", "SystemSettings.exe"],

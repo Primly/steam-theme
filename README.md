@@ -1,8 +1,9 @@
 # Steam Theme
 
-Turns your last-played Steam game into a full Windows theme: per-monitor
-wallpaper, accent color, dark/light mode, Windows Terminal scheme, and
-(optionally) SignalRGB lighting.
+Turns your last-played Steam game into a full desktop theme: per-monitor
+wallpaper, accent color, dark/light mode, terminal scheme, and (optionally)
+RGB lighting. Runs on **Windows** and on **Linux with KDE Plasma 6**
+(developed against Bazzite).
 
 ## Pipeline
 
@@ -23,11 +24,15 @@ wallpaper, accent color, dark/light mode, Windows Terminal scheme, and
    default) pins every theme to dark, including VLM suggestions. Optionally a local VLM
    (OpenAI-compatible, e.g. LM Studio) or OpenRouter model classifies the
    mood and names the theme.
-4. **Apply** — `theme.py` composites one span-style image across all monitor
-   rectangles (each display center-cropped from its assigned art), writes the
-   accent/dark-mode registry keys, generates a `.theme` INI, and launches it
-   so Windows performs the full visual transition. Then Windows Terminal gets
-   a named color scheme and SignalRGB gets pinged.
+4. **Apply** — on Windows (`theme.py`): composites one span-style image
+   across all monitor rectangles (each display center-cropped from its
+   assigned art), writes the accent/dark-mode registry keys, generates a
+   `.theme` INI, and launches it so Windows performs the full visual
+   transition. On Linux (`linux_theme.py`): renders one exact-sized tile per
+   screen and pushes it to each Plasma containment over D-Bus, then sets the
+   KDE color scheme + accent with `plasma-apply-colorscheme`. Then the
+   terminal gets a named color scheme (Windows Terminal / Konsole) and the
+   RGB stack gets pinged (SignalRGB / OpenRGB).
 
 ## Monitor mapping
 
@@ -39,6 +44,10 @@ description (case-insensitive):
 | `LS49AG95` | Odyssey G9 (5120×1440) | hero |
 | `3220DGF` | Dell S3220DGF (2560×1440) | logo |
 | `PDM-15T` | small portable display | icon |
+
+On **Linux**, match against the connector name shown in the config UI's
+Monitors section instead (`HDMI-A-1`, `eDP-1`, `DP-1`, ...) — the Linux
+desktop doesn't expose monitor model names to apps.
 
 Unmatched monitors fall back by size (largest → hero, then logo, then icon).
 Heroes are cover-cropped to fill their display. Transparent PNG logos and
@@ -97,6 +106,13 @@ With Option B, download a fresh ZIP.
 **Contributing:** the `main` branch is protected — outside changes come
 through pull requests and must pass the CI test suite before they can be
 merged.
+
+**Linux (Bazzite / other distros):** the same steps work in a terminal.
+Bazzite already ships Python 3 with Pillow and requests, so step 3 is
+usually a no-op there; on other distros install Python 3.10+ first, then
+`pip install -r requirements.txt` (on immutable/atomic distros use a venv or
+`pip install --user`). Only the platform extras are gated:
+`pywin32` installs on Windows, `openrgb` on Linux.
 
 ### 3. Install the dependencies
 
@@ -245,6 +261,38 @@ effect without a restart.
   Actions workflows for known-vulnerable versions; CI runs the test suite
   (including the guard tests above) on every push and pull request.
 
+### Linux: systemd user services (Bazzite & friends)
+
+```bash
+bash install_service.sh          # install + start
+bash install_service.sh remove   # stop + uninstall
+```
+
+Creates `steam-theme.service` (polling service) and `steam-theme-ui.service`
+(config page at http://127.0.0.1:8765) as **user** units — no root needed.
+The app auto-detects the Wayland/D-Bus session environment, so the services
+work even though systemd user units start with a minimal environment. To
+keep them running while logged out: `sudo loginctl enable-linger $USER`.
+
+Notes specific to the KDE/Plasma port:
+
+- **Wallpapers are per-screen**, not spanned: each monitor gets its own
+  exact-sized tile (rendered at physical resolution, scale-factor aware).
+- **Dark/light + accent** go through `plasma-apply-colorscheme`. KDE has ONE
+  global color scheme (apps + shell together), so the Windows-style split
+  app/system mode doesn't exist — the *system mode* setting is used.
+- **Terminal** integration is a generated Konsole colorscheme + a
+  "Steam Theme" profile (optionally made the default profile).
+- **RGB lighting** uses OpenRGB instead of SignalRGB: `ujust openrgb
+  install` on Bazzite, then run `openrgb --server`. Devices are set to their
+  Direct/Static mode with the theme palette. Best-effort: if the server
+  isn't running, the pipeline just skips it.
+- **Restore** snapshots KDE scheme/accent/wallpapers to
+  `desktop_backup.json` before the first apply (same never-overwrite rule).
+- **Game Mode / SteamOS session:** theming targets the Plasma desktop
+  session. If you play in Game Mode, the new theme applies when you return
+  to the desktop (the detection + download still happen in the background).
+
 ### Scheduled task (service + unlock fix)
 
 ```powershell
@@ -375,8 +423,9 @@ reactivity, at the cost of palette skinning.
   proofing is on you (the exe name must match).
 - `exclude_appids` defaults to `[431960]` (Wallpaper Engine — not a game).
 - **Development:** `python -m unittest discover -s tests -v` runs the test
-  suite (path sandboxing, web UI guards, effect rendering, INI injection).
-  CI runs the same on every push via GitHub Actions.
+  suite (path sandboxing, web UI guards, effect rendering, INI injection,
+  Linux parsers/dispatchers). The suite runs on both Windows and Linux; CI
+  runs the same on every push via GitHub Actions.
 - SignalRGB's REST API can only apply existing effects — parameters are
   read-only over HTTP. So the pipeline generates a custom palette-gradient
   effect (`Steam Theme.html`) into `Documents\WhirlwindFX\Effects` and

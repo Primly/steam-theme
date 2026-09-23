@@ -7,8 +7,13 @@ on:
 
 jobs:
   test:
-    # Windows runner: the app imports winreg/ctypes Windows APIs at module load
-    runs-on: windows-latest
+    # Both platforms: Windows exercises theme.py (winreg/ctypes), Linux
+    # exercises linux_theme.py. Shared modules are covered on both.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -17,6 +22,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Compile check
-        run: python -m py_compile main.py webui.py theme.py extras.py artwork.py upscale.py palette.py steamdetect.py srgb_effects.py
+        run: python -m py_compile main.py webui.py theme.py linux_theme.py wallpaper.py extras.py artwork.py upscale.py palette.py steamdetect.py srgb_effects.py openrgb_sync.py
       - name: Unit tests
         run: python -m unittest discover -s tests -v

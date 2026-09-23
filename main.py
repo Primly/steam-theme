@@ -1,8 +1,9 @@
 """Steam Theme service.
 
 Polls Steam for the last-played game; when it changes, runs the pipeline:
-  detect -> fetch art -> palette -> compose per-monitor wallpaper -> .theme
-  -> Windows Terminal / SignalRGB extras.
+  detect -> fetch art -> palette -> compose per-monitor wallpaper -> theme
+  -> terminal / RGB extras. Runs on Windows (registry + .theme) and Linux
+  (KDE Plasma 6 — Bazzite).
 
 Usage:
   python main.py                run the polling service (forever)
@@ -25,11 +26,15 @@ import artwork
 import extras
 import palette as palette_mod
 import steamdetect
-import theme as theme_mod
 import upscale
 
+if sys.platform == "win32":
+    import theme as theme_mod
+else:
+    import linux_theme as theme_mod
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 
 def safe_join(base, *parts):
@@ -162,17 +167,8 @@ def run_pipeline(cfg, game, log, dry_run=False):
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     wallpaper = theme_mod.compose_wallpaper(monitors, art,
                                             os.path.join(cache, f"wallpaper_{stamp}.jpg"), log)
-    # remove previous composites; Windows keeps its own transcoded copy
-    import glob
-    for old in glob.glob(os.path.join(cache, "wallpaper_*.jpg")) + \
-                glob.glob(os.path.join(cache, "wallpaper_span.jpg")):
-        if os.path.abspath(old) != os.path.abspath(wallpaper):
-            try:
-                os.remove(old)
-            except OSError:
-                pass
     theme_path = theme_mod.write_theme_file(
-        os.path.join(cache, "theme.theme"), theme_name, wallpaper, pal)
+        os.path.join(cache, theme_mod.THEME_FILENAME), theme_name, wallpaper, pal)
 
     with open(os.path.join(cache, "palette.json"), "w", encoding="utf-8") as f:
         json.dump({**pal, "wallpaper": os.path.abspath(wallpaper)}, f, indent=2)
@@ -186,13 +182,13 @@ def run_pipeline(cfg, game, log, dry_run=False):
     sys_mode = cfg.get("system_mode", "match")
     app_mode = cfg.get("app_mode", "match")
     theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
-    theme_mod.apply_theme(theme_path, log)
+    theme_mod.apply_theme(theme_path, log, cfg=cfg)
     # the theme engine applies its own mode defaults on launch — re-assert
     # ours after it finishes so app/system modes land as configured
     time.sleep(3)
     theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
-    extras.apply_windows_terminal(cfg, pal, theme_name, art.get("hero"), log)
-    extras.apply_signalrgb(cfg, pal, log)
+    extras.apply_terminal(cfg, pal, theme_name, art.get("hero"), log)
+    extras.apply_rgb(cfg, pal, log)
     return {"theme_path": theme_path, "palette": pal, "wallpaper": wallpaper}
 
 
@@ -216,7 +212,7 @@ def reapply(cfg, log):
     app_mode = cfg.get("app_mode", "match")
     if pal:
         theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
-    theme_mod.apply_theme(theme_path, log)
+    theme_mod.apply_theme(theme_path, log, cfg=cfg)
     if pal:
         time.sleep(3)
         theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
@@ -225,7 +221,7 @@ def reapply(cfg, log):
 def reapply_from_cache(cfg, log, cache_key):
     """Re-apply a theme straight from its cache folder (theme gallery)."""
     cache = safe_join(cfg_path(cfg, "cache_dir", "cache"), cache_key)
-    theme_path = os.path.join(cache, "theme.theme")
+    theme_path = os.path.join(cache, theme_mod.THEME_FILENAME)
     if not os.path.exists(theme_path):
         raise FileNotFoundError(f"no cached theme for {cache_key!r}")
     with open(os.path.join(cache, "palette.json"), encoding="utf-8") as f:
@@ -234,12 +230,12 @@ def reapply_from_cache(cfg, log, cache_key):
     sys_mode = cfg.get("system_mode", "match")
     app_mode = cfg.get("app_mode", "match")
     theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
-    theme_mod.apply_theme(theme_path, log)
+    theme_mod.apply_theme(theme_path, log, cfg=cfg)
     time.sleep(3)
     theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
-    extras.apply_windows_terminal(cfg, pal, pal.get("theme_name") or cache_key,
-                                  pal.get("wallpaper"), log)
-    extras.apply_signalrgb(cfg, pal, log)
+    extras.apply_terminal(cfg, pal, pal.get("theme_name") or cache_key,
+                          pal.get("wallpaper"), log)
+    extras.apply_rgb(cfg, pal, log)
     # point state at this theme and set a manual hold: the poller keeps
     # this theme until the user actually plays a (different) game, instead of
     # reverting to the last-played game on the next poll

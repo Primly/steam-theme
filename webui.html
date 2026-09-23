@@ -82,7 +82,7 @@
     <button onclick="redo('reapply')" title="Re-applies the saved .theme file; no regeneration, no API calls, no credits">Re-apply</button>
     <button onclick="redo('regenerate')" title="New VLM name + palette + wallpaper composite; reuses cached art and upscales (no credits)">Regenerate</button>
     <button onclick="refetch()" title="Deletes cached art + upscales and re-creates everything">Full refetch</button>
-    <button onclick="restoreLook()" title="Restores the wallpaper, accent color, and light/dark modes Windows had before Steam Theme first ran">Restore Windows look</button>
+    <button id="restoreBtn" onclick="restoreLook()" title="Restores the wallpaper, accent color, and light/dark modes from before Steam Theme first ran">Restore Windows look</button>
     <span class="hint" style="margin:0">Full refetch re-runs upscaling — may use Topaz credits.</span>
   </div>
 </section>
@@ -99,14 +99,14 @@
     </select>
   </div>
   <div class="row">
-    <label for="sysMode">Windows system mode</label>
+    <label for="sysMode" id="sysModeLabel">Windows system mode</label>
     <select id="sysMode">
       <option value="match">Match theme</option>
       <option value="dark">Always dark</option>
       <option value="light">Always light</option>
     </select>
   </div>
-  <div class="row">
+  <div class="row" id="appModeRow">
     <label for="appMode">Default app mode</label>
     <select id="appMode">
       <option value="match">Match theme</option>
@@ -281,12 +281,31 @@
 <section>
   <h2>Extras</h2>
   <p class="hint">Extend the theme beyond the desktop.</p>
+  <div id="wtBlock">
   <div class="row">
     <div class="switch"><input type="checkbox" id="wtEnabled"><span>Windows Terminal color scheme</span></div>
     <div class="switch"><input type="checkbox" id="wtBg"><span>…with hero as background image</span></div>
     <label for="wtOpacity" style="min-width:0">opacity</label>
     <input id="wtOpacity" type="number" min="0" max="1" step="0.05" style="max-width:80px">
   </div>
+  </div>
+  <div id="konsoleBlock" style="display:none">
+  <div class="row">
+    <div class="switch"><input type="checkbox" id="konEnabled"><span>Konsole color scheme (a “Steam Theme” profile)</span></div>
+    <div class="switch"><input type="checkbox" id="konDefault"><span>…and make it Konsole’s default profile</span></div>
+  </div>
+  </div>
+  <div id="orgbBlock" style="display:none">
+  <div class="row">
+    <div class="switch"><input type="checkbox" id="orgbEnabled"><span>OpenRGB lighting sync</span></div>
+    <label for="orgbHost" style="min-width:0">SDK host</label>
+    <input id="orgbHost" type="text" style="max-width:150px" placeholder="127.0.0.1">
+    <label for="orgbPort" style="min-width:0">port</label>
+    <input id="orgbPort" type="number" style="max-width:90px" placeholder="6742">
+  </div>
+  <p class="hint">Bazzite: <code>ujust openrgb install</code>, then run <code>openrgb --server</code>. Devices get the theme palette in their Direct/Static mode, accent color first. Best-effort: skips quietly when the SDK server isn’t running.</p>
+  </div>
+  <div id="srgbBlock">
   <div class="row">
     <div class="switch"><input type="checkbox" id="srgbEnabled"><span>SignalRGB lighting sync</span></div>
     <div class="switch"><input type="checkbox" id="srgbCustom"><span>Generate palette-skinned effect</span></div>
@@ -317,11 +336,12 @@
     <input id="srgbFallback" type="text" placeholder="Solid Color">
     <span class="hint" style="margin:0">Stock effect used until the generated one is registered — or instead of it, if generation is off.</span>
   </div>
+  </div>
 </section>
 
 <section>
   <h2>Monitors</h2>
-  <p class="hint">Match is a case-insensitive substring of the display name. Roles: hero / logo / icon.
+  <p class="hint" id="monHint">Match is a case-insensitive substring of the display name. Roles: hero / logo / icon.
     <button onclick="loadMonitors()">Refresh detected displays</button></p>
   <table id="monTable"></table>
 </section>
@@ -348,6 +368,22 @@
 
 <script>
 let cfg = {};
+let PLATFORM = "win32";
+
+function applyPlatform(p) {
+  const win = p === "win32";
+  document.getElementById("wtBlock").style.display = win ? "" : "none";
+  document.getElementById("srgbBlock").style.display = win ? "" : "none";
+  document.getElementById("konsoleBlock").style.display = win ? "none" : "";
+  document.getElementById("orgbBlock").style.display = win ? "none" : "";
+  document.getElementById("restoreBtn").textContent = win ? "Restore Windows look" : "Restore desktop look";
+  // KDE has one global color scheme — no separate app mode
+  document.getElementById("appModeRow").style.display = win ? "" : "none";
+  document.getElementById("sysModeLabel").textContent = win ? "Windows system mode" : "Dark/light mode (KDE-global)";
+  document.getElementById("monHint").childNodes[0].textContent = win
+    ? "Match is a case-insensitive substring of the display name. Roles: hero / logo / icon. "
+    : "Match is a case-insensitive substring of the connector name (e.g. HDMI-A-1). Roles: hero / logo / icon. ";
+}
 
 const v = id => document.getElementById(id).value.trim();
 const setV = (id, val) => document.getElementById(id).value = val ?? "";
@@ -489,6 +525,9 @@ function renderMonitors() {
 // ---- load / save
 async function load() {
   cfg = await api("/api/config");
+  const st0 = await api("/api/state");
+  PLATFORM = st0.platform || "win32";
+  applyPlatform(PLATFORM);
   setV("appearance", cfg.appearance_preference || (cfg.force_dark_mode ? "dark" : "auto"));
   setV("sysMode", cfg.system_mode || "match"); setV("appMode", cfg.app_mode || "match");
   setV("paletteMode", cfg.palette_mode || "colorful");
@@ -517,6 +556,10 @@ async function load() {
   setV("srgbStyle", sg.effect_style || "gradient"); setV("srgbBase", sg.base_url || "http://localhost:16038");
   setV("srgbScope", sg.effect_scope || "per_game");
   setV("srgbFallback", sg.fallback_effect || (sg.effect_map || {}).default || "Solid Color");
+  const kn = cfg.konsole || {};
+  setC("konEnabled", kn.enabled); setC("konDefault", kn.set_default_profile !== false);
+  const og = cfg.openrgb || {};
+  setC("orgbEnabled", og.enabled); setV("orgbHost", og.host || ""); setV("orgbPort", og.port ?? "");
   renderMonitors();
   loadMonitors();
   loadState();
@@ -555,13 +598,21 @@ async function save(apply) {
   cfg.topaz = {api_key: v("topazKey"), model: v("topazModel"),
                creativity: parseInt(v("topazCreativity")) || 3, prompt: v("topazPrompt"),
                models: tmodels};
-  cfg.windows_terminal = {enabled: document.getElementById("wtEnabled").checked,
-    set_background_image: document.getElementById("wtBg").checked,
-    background_opacity: parseFloat(v("wtOpacity")) || 0.25};
-  cfg.signalrgb = {enabled: document.getElementById("srgbEnabled").checked, base_url: v("srgbBase"),
-                   custom_effect: document.getElementById("srgbCustom").checked,
-                   effect_style: v("srgbStyle"), effect_scope: v("srgbScope"),
-                   fallback_effect: v("srgbFallback") || "Solid Color"};
+  if (PLATFORM === "win32") {
+    cfg.windows_terminal = {enabled: document.getElementById("wtEnabled").checked,
+      set_background_image: document.getElementById("wtBg").checked,
+      background_opacity: parseFloat(v("wtOpacity")) || 0.25};
+    cfg.signalrgb = {enabled: document.getElementById("srgbEnabled").checked, base_url: v("srgbBase"),
+                     custom_effect: document.getElementById("srgbCustom").checked,
+                     effect_style: v("srgbStyle"), effect_scope: v("srgbScope"),
+                     fallback_effect: v("srgbFallback") || "Solid Color"};
+  } else {
+    cfg.konsole = {enabled: document.getElementById("konEnabled").checked,
+                   set_default_profile: document.getElementById("konDefault").checked};
+    cfg.openrgb = {enabled: document.getElementById("orgbEnabled").checked,
+                   host: v("orgbHost") || "127.0.0.1",
+                   port: parseInt(v("orgbPort")) || 6742};
+  }
   const mons = [];
   document.querySelectorAll("[data-mon]").forEach(el => {
     const i = +el.dataset.mon;

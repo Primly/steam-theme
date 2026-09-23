@@ -50,12 +50,22 @@
     "set_background_image": true,
     "background_opacity": 0.25
   },
+  "konsole": {
+    "enabled": false,
+    "set_default_profile": true
+  },
+  "openrgb": {
+    "enabled": false,
+    "host": "127.0.0.1",
+    "port": 6742
+  },
 
   "monitors": [
     { "match": "LS49AG95", "role": "hero" },
     { "match": "3220DGF",  "role": "logo" },
     { "match": "PDM-15T",  "role": "icon" }
   ],
+  "_monitors_note": "Windows: match the display name. Linux: match the connector name (HDMI-A-1, eDP-1, DP-1, ...) shown in the Monitors section.",
 
   "exclude_appids": [431960],
 

@@ -1,3 +1,4 @@
 requests>=2.34.2
 Pillow>=12.3.0
-pywin32>=312
+pywin32>=312; sys_platform == "win32"
+openrgb>=0.3.5; sys_platform == "linux"
