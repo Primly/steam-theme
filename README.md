@@ -11,6 +11,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
 [![Version](https://img.shields.io/badge/version-1.2.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
 
@@ -551,8 +552,7 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📄 License
 
-This repository doesn't declare a license yet — all rights are reserved by
-default. If you want to use or fork the code, open an issue first.
+[MIT](LICENSE) — use it, fork it, change it; just keep the copyright notice.
 
 ---
 
