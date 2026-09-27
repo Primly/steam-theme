@@ -337,12 +337,18 @@ class Handler(BaseHTTPRequestHandler):
                     img = (cands[idx] if idx is not None and 0 <= idx < len(cands)
                            else artwork.active_hero(cache) if idx is None else None)
                 else:
-                    img = os.path.join(cache, f"{role}.jpg")
+                    # normalized on download: logo/icon are .jpg or .png
+                    img = next((os.path.join(cache, f"{role}{e}")
+                                for e in (".jpg", ".png")
+                                if os.path.exists(os.path.join(cache, f"{role}{e}"))),
+                               None)
                 if not img:
                     raise OSError("no such candidate")
                 with open(img, "rb") as f:
                     data = f.read()
-                self._send(200, content_type="image/jpeg", raw=data)
+                ctype = ("image/png" if img.lower().endswith(".png")
+                         else "image/jpeg")
+                self._send(200, content_type=ctype, raw=data)
             except (OSError, ValueError):
                 self._send(404, {"error": "no art"})
         elif path == "/api/log":

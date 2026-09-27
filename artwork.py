@@ -30,7 +30,50 @@ MIN_DIMENSION = 512  # px; anything smaller is too blurry to fill a monitor
 MAX_HERO_CANDIDATES = 8
 
 
-def _download(url, dest):
+def _normalize_image(path, log=print):
+    """Ensure a cached image is a real JPEG or PNG with a matching extension.
+
+    Sources lie about formats: Steam community icons are ICO, some SGDB art
+    is WebP, PNGs arrive at .jpg names. Browsers and PIL don't care, but the
+    Topaz API only accepts JPEG/PNG/TIFF (a mislabeled file gets a 415).
+    - right format, wrong extension -> plain rename (lossless, no re-encode)
+    - anything else (ICO, WebP, GIF, TIFF, ...) -> transcode: PNG when the
+      image has transparency (logos/icons need it), JPEG otherwise
+    Returns the final path.
+    """
+    try:
+        with Image.open(path) as im:
+            fmt = (im.format or "").upper()
+            alpha = (im.mode in ("RGBA", "LA")
+                     or (im.mode == "P" and "transparency" in im.info))
+            want_ext = ".jpg" if fmt == "JPEG" else ".png" if fmt == "PNG" else None
+            if want_ext and path.lower().endswith(want_ext):
+                return path  # already canonical
+            # Windows locks the file while PIL has it open, so all renames
+            # and saves happen below, AFTER the with-block closes it
+            img = None if want_ext else im.convert("RGBA" if alpha else "RGB")
+        stem = os.path.splitext(path)[0]
+        if want_ext:
+            dest = stem + want_ext
+            if os.path.exists(dest):
+                os.remove(dest)  # stale duplicate of the same stem
+            os.replace(path, dest)
+            log(f"  [art] renamed {os.path.basename(path)} -> "
+                f"{os.path.basename(dest)} (content is {fmt})")
+            return dest
+        dest = stem + (".png" if alpha else ".jpg")
+        img.save(dest, "PNG" if alpha else "JPEG", quality=92)
+        if os.path.abspath(dest) != os.path.abspath(path):
+            os.remove(path)
+        log(f"  [art] transcoded {fmt or 'unknown'} -> "
+            f"{'PNG' if alpha else 'JPEG'}: {os.path.basename(dest)}")
+        return dest
+    except Exception as e:
+        log(f"  [art] normalize skipped for {os.path.basename(path)}: {e}")
+        return path
+
+
+def _download(url, dest, log=print):
     r = requests.get(url, headers=UA, timeout=30)
     if r.status_code != 200 or len(r.content) < 5000:
         return None
@@ -42,7 +85,7 @@ def _download(url, dest):
     except Exception:
         os.remove(dest)
         return None
-    return dest
+    return _normalize_image(dest, log)
 
 
 def _big_enough(path):
@@ -108,26 +151,33 @@ def _wallhaven_hero(name, key=None):
 # ------------------------------------------------------------ hero helpers
 
 def _hero_num(path):
-    m = re.fullmatch(r"hero_(\d+)\.jpg", os.path.basename(path))
+    m = re.fullmatch(r"hero_(\d+)\.(?:jpg|png)", os.path.basename(path))
     return int(m.group(1)) if m else 0
 
 
 def hero_candidates(cache_dir):
-    """All cached hero candidates, display order: legacy hero.jpg first, then
-    hero_1.jpg, hero_2.jpg, ... (numeric sort — numbers can pass 9 as files
-    are pruned and re-fetched over time)."""
+    """All cached hero candidates, display order: legacy hero.jpg/hero.png
+    first, then hero_1, hero_2, ... (numeric sort — numbers can pass 9 as
+    files are pruned and re-fetched over time).
+
+    Filenames must fullmatch hero_<digits>.(jpg|png) exactly — the glob
+    alone would also catch hero_N_upscaled_<model>.png (the upscale cache),
+    corrupting both the list and every picker index."""
     out = []
-    legacy = os.path.join(cache_dir, "hero.jpg")
-    if os.path.exists(legacy):
-        out.append(legacy)
-    out += sorted(glob.glob(os.path.join(cache_dir, "hero_*.jpg")),
-                  key=_hero_num)
+    for name in ("hero.jpg", "hero.png"):  # legacy single-hero cache files
+        p = os.path.join(cache_dir, name)
+        if os.path.exists(p):
+            out.append(p)
+    numbered = (glob.glob(os.path.join(cache_dir, "hero_*.jpg"))
+                + glob.glob(os.path.join(cache_dir, "hero_*.png")))
+    out += sorted((p for p in numbered if _hero_num(p)), key=_hero_num)
     return out
 
 
 def _next_hero_dest(cache_dir, taken):
-    """First free hero_N.jpg slot after the taken ones (new candidates always
-    sort after existing ones in display order)."""
+    """First free hero_N slot after the taken ones (new candidates always
+    sort after existing ones in display order). The extension is provisional
+    — _normalize_image fixes it to match the actual content."""
     n = max([_hero_num(p) for p in taken] + [0]) + 1
     return os.path.join(cache_dir, f"hero_{n}.jpg")
 
@@ -219,6 +269,7 @@ def fetch_artwork(appid, name, icon_url, cfg, log=print, cache_key=None):
             pass
     heroes = []
     for p in existing[:hero_count]:
+        p = _normalize_image(p, log)  # fix legacy formats/extensions in place
         if _big_enough(p):
             heroes.append(p)
         else:
@@ -233,7 +284,7 @@ def fetch_artwork(appid, name, icon_url, cfg, log=print, cache_key=None):
             break
         dest = _next_hero_dest(cache, heroes)
         log(f"  [art] trying hero #{len(heroes) + 1}: {url}")
-        got = _download(url, dest)
+        got = _download(url, dest, log)
         if got and _big_enough(got):
             heroes.append(got)
         elif got:
@@ -242,7 +293,7 @@ def fetch_artwork(appid, name, icon_url, cfg, log=print, cache_key=None):
         wh = _wallhaven_hero(name, cfg.get("wallhaven_api_key") or None)
         if wh:
             log(f"  [art] wallhaven fallback: {wh}")
-            got = _download(wh, _next_hero_dest(cache, heroes))
+            got = _download(wh, _next_hero_dest(cache, heroes), log)
             if got:
                 heroes.append(got)
     if len(heroes) > 1:
@@ -250,13 +301,15 @@ def fetch_artwork(appid, name, icon_url, cfg, log=print, cache_key=None):
 
     result = {}
     for role, urls in (("logo", logo_urls), ("icon", icon_urls)):
-        dest = os.path.join(cache, f"{role}.jpg")
-        if os.path.exists(dest):
-            result[role] = dest
+        cached = next((p for p in (os.path.join(cache, f"{role}.jpg"),
+                                   os.path.join(cache, f"{role}.png"))
+                       if os.path.exists(p)), None)
+        if cached:
+            result[role] = _normalize_image(cached, log)
             continue
         for url in urls:
             log(f"  [art] trying {role}: {url}")
-            got = _download(url, dest)
+            got = _download(url, os.path.join(cache, f"{role}.jpg"), log)
             # logos/icons may be small or transparent PNGs — the compositor
             # gives those a centered-on-backdrop treatment
             if got:

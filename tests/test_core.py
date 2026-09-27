@@ -351,6 +351,89 @@ class TestHeroCandidates(unittest.TestCase):
     def test_active_hero_empty_cache(self):
         self.assertIsNone(artwork.active_hero(self.dir))
 
+    def test_upscale_cache_files_never_pollute_candidates(self):
+        # hero_N_upscaled_<model>.png files are the upscale cache — they
+        # match a naive hero_*.png glob and would corrupt picker indexes
+        self._mk("hero.jpg")
+        self._mk("hero_upscaled_bloom-2.png")
+        self._mk("hero_1.jpg")
+        self._mk("hero_1_upscaled_text-refine.png")
+        self._mk("hero_2.jpg")
+        self.assertEqual(self._names(artwork.hero_candidates(self.dir)),
+                         ["hero.jpg", "hero_1.jpg", "hero_2.jpg"])
+        artwork.set_hero_choice(self.dir, 2)
+        self.assertTrue(artwork.active_hero(self.dir).endswith("hero_2.jpg"))
+
+
+class TestNormalizeImage(unittest.TestCase):
+    """Downloads are normalized to real JPEG/PNG with matching extensions —
+    Topaz rejects anything else (Steam community icons are ICO, some SGDB
+    art is WebP or PNG-bytes-at-a-.jpg-name)."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(
+            self.dir, ignore_errors=True))
+
+    def _save(self, name, fmt, mode="RGB", size=(32, 32)):
+        from PIL import Image
+        p = os.path.join(self.dir, name)
+        color = (10, 20, 30, 128) if "A" in mode else (10, 20, 30)
+        Image.new(mode, size, color).save(p, fmt)
+        return p
+
+    def test_ico_with_alpha_becomes_png(self):
+        p = self._save("icon.jpg", "ICO", mode="RGBA", size=(256, 256))
+        out = artwork._normalize_image(p, lambda m: None)
+        self.assertTrue(out.endswith("icon.png"))
+        self.assertFalse(os.path.exists(p))  # original removed
+        from PIL import Image
+        with Image.open(out) as im:
+            self.assertEqual(im.format, "PNG")
+            self.assertEqual(im.mode, "RGBA")  # transparency preserved
+
+    def test_webp_becomes_jpeg(self):
+        p = self._save("hero_1.jpg", "WEBP")
+        out = artwork._normalize_image(p, lambda m: None)
+        self.assertTrue(out.endswith("hero_1.jpg"))
+        from PIL import Image
+        with Image.open(out) as im:
+            self.assertEqual(im.format, "JPEG")
+
+    def test_png_content_in_jpg_is_renamed_not_reencoded(self):
+        p = self._save("logo.jpg", "PNG", mode="RGBA")
+        with open(p, "rb") as f:
+            before = f.read()
+        out = artwork._normalize_image(p, lambda m: None)
+        self.assertTrue(out.endswith("logo.png"))
+        with open(out, "rb") as f:
+            self.assertEqual(f.read(), before)  # plain rename, lossless
+
+    def test_canonical_jpeg_untouched(self):
+        p = self._save("hero.jpg", "JPEG")
+        with open(p, "rb") as f:
+            before = f.read()
+        out = artwork._normalize_image(p, lambda m: None)
+        self.assertEqual(out, p)
+        with open(out, "rb") as f:
+            self.assertEqual(f.read(), before)
+
+    def test_corrupt_file_is_left_alone(self):
+        p = os.path.join(self.dir, "hero_1.jpg")
+        with open(p, "wb") as f:
+            f.write(b"not an image at all")
+        self.assertEqual(artwork._normalize_image(p, lambda m: None), p)
+
+    def test_mixed_extension_candidates(self):
+        self._save("hero.jpg", "JPEG")
+        self._save("hero_1.png", "PNG")
+        self._save("hero_2.jpg", "JPEG")
+        names = [os.path.basename(p)
+                 for p in artwork.hero_candidates(self.dir)]
+        self.assertEqual(names, ["hero.jpg", "hero_1.png", "hero_2.jpg"])
+        artwork.set_hero_choice(self.dir, 1)
+        self.assertTrue(artwork.active_hero(self.dir).endswith("hero_1.png"))
+
 
 class TestSgdbMultiHero(unittest.TestCase):
     def test_heroes_sliced_to_count(self):

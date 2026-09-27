@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.4.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.4.1-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -236,7 +236,10 @@ detect ──▶ fetch art ──▶ palette ──▶ (AI naming) ──▶ (up
 2. **Artwork** — per role (hero / logo / icon), with fallbacks:
    SteamGridDB → Steam CDN (`library_hero.jpg`, `logo.png`, `header.jpg`)
    → wallhaven search. Downloaded once per game, cached in `cache/`.
-   Heroes come in multiples (`hero.count`, default 6) — see
+   Every download is **normalized to a real JPEG or PNG with a matching
+   extension** (sources sometimes serve ICO/WebP files or PNGs at `.jpg`
+   names) so the Topaz API never rejects them. Heroes come in multiples
+   (`hero.count`, default 6) — see
    [Hero artwork](#️-hero-artwork-pick-or-rotate).
 3. **Palette** — 16-color median cut (Colorful / Material / Muted styles),
    an accent checked for WCAG contrast, and a dark/light decision from the
@@ -544,7 +547,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 95 tests
+python -m unittest discover -s tests -v   # 102 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -581,6 +584,11 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.4.1** — downloads are normalized to genuine JPEG/PNG with matching
+  extensions on arrival (Steam community icons are actually ICO files, some
+  SGDB art is WebP/PNG-at-.jpg-names — the Topaz API 415-rejected them);
+  existing caches are repaired in place on the next run. Fixes hero
+  candidate lists accidentally including upscale cache files.
 - **1.4.0** — hero artwork choice: up to 8 SteamGridDB hero candidates per
   game, a thumbnail picker on the current theme's gallery card, and a
   rotate mode (Windows `.theme` slideshow / Plasma slideshow plugin) with
