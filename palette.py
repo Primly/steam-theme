@@ -131,6 +131,36 @@ def _chat_completion(base_url, api_key, model, messages, timeout=420):
     return r.json()["choices"][0]["message"]["content"]
 
 
+# The JSON shape the naming call parses back out. A custom prompt that omits
+# it gets it appended automatically (build_naming_prompt), so a free-form
+# prompt can't silently break parsing.
+_JSON_CONTRACT = ('{"theme_name": "<short evocative name>", "mood": "<e.g. '
+                  'dark fantasy, neon cyberpunk, cozy pixel>", '
+                  '"appearance": "dark"|"light", '
+                  '"palette_mode": "material"|"muted"|"colorful"}')
+
+# Keep in sync with AI_DEFAULT_PROMPT in webui.html (the UI shows this text
+# in the prompt field as an editable guide).
+DEFAULT_NAMING_PROMPT = (
+    "This is key art from the game '{game}'. Its dominant colors are "
+    "{colors}. Describe the mood and give this desktop theme a short, "
+    "evocative name. Respond with ONLY a JSON object: " + _JSON_CONTRACT
+)
+
+
+def build_naming_prompt(cfg, game_name, palette):
+    """The VLM naming prompt: the user's custom ai.prompt when set (with
+    {game} and {colors} placeholders filled in), otherwise the built-in
+    default."""
+    custom = (cfg.get("ai", {}).get("prompt") or "").strip()
+    text = (custom or DEFAULT_NAMING_PROMPT) \
+        .replace("{game}", str(game_name)) \
+        .replace("{colors}", ", ".join(palette["colors"][:8]))
+    if '"theme_name"' not in text:
+        text += " Respond with ONLY a JSON object: " + _JSON_CONTRACT
+    return text
+
+
 def ai_theme_naming(cfg, image_path, palette, game_name, log=print):
     """Ask a local VLM (OpenAI-compatible, e.g. LM Studio) or OpenRouter for a
     mood classification + theme name. Returns dict or None. Never raises."""
@@ -151,13 +181,7 @@ def ai_theme_naming(cfg, image_path, palette, game_name, log=print):
 
     with open(image_path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
-    prompt = (
-        f"This is key art from the game '{game_name}'. Its dominant colors are "
-        f"{', '.join(palette['colors'][:8])}. Respond with ONLY a JSON object: "
-        '{"theme_name": "<short evocative name>", "mood": "<e.g. dark fantasy, '
-        'neon cyberpunk, cozy pixel>", "appearance": "dark"|"light", '
-        '"palette_mode": "material"|"muted"|"colorful"}'
-    )
+    prompt = build_naming_prompt(cfg, game_name, palette)
     messages = [{
         "role": "user",
         "content": [

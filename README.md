@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.2.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.3.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -296,6 +296,7 @@ UI takes effect without restarts.
 | `system_mode` / `app_mode` | `"match"` | `match` the theme, or force `dark`/`light` |
 | `palette_mode` | `"colorful"` | `colorful` / `material` / `muted` |
 | `ai.enabled` / `base_url` / `api_key` / `model` | `false` | OpenAI-compatible VLM for theme naming |
+| `ai.prompt` | built-in | Custom naming prompt; `{game}`/`{colors}` placeholders |
 | `upscaling.enabled` / `provider` | `false` | `topaz` or `ai` (OpenAI images endpoint) |
 | `topaz.api_key` / `model` / `creativity` / `prompt` / `models` | — | Topaz settings; `models.hero/logo/icon` override per role |
 | `signalrgb.*` (Windows) | — | `enabled`, `base_url`, `custom_effect`, `effect_style`, `effect_scope` (`per_game`/`single`), `effects_dir`, `fallback_effect` |
@@ -327,6 +328,14 @@ art and returns a theme name, a mood description, and (in auto mode) a
 dark/light + palette-style opinion. The mood also feeds generative Topaz
 models. Everything is optional — no AI configured just means
 `"<Game> — Steam Theme"` names.
+
+**Custom prompts:** the *Naming prompt* field in the AI section is pre-filled
+with the built-in default as a guide — edit it freely to steer naming style
+(e.g. "name themes like 80s synthwave album titles"). `{game}` and
+`{colors}` placeholders are filled in per theme. If your prompt omits the
+"respond with JSON" instruction, it's appended automatically so parsing
+can't break; the **Reset** button restores the default. Leaving the field
+unchanged (or empty) keeps the built-in prompt out of your config entirely.
 
 ## 🔎 Upscaling with Topaz Gigapixel
 
@@ -541,6 +550,9 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.3.0** — custom AI naming prompts: editable prompt field in the config
+  UI with the built-in default as a guide, `{game}`/`{colors}` placeholders,
+  and automatic JSON-contract appending.
 - **1.2.0** — Linux support (KDE Plasma 6 / Bazzite): per-screen wallpapers,
   Breeze dark/light + accent, Konsole, OpenRGB, systemd user services,
   cross-platform CI. Platform dispatch in the UI.

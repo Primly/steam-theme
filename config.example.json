@@ -22,7 +22,8 @@
     "base_url": "http://localhost:1234/v1",
     "api_key": "lm-studio",
     "model": "glm-4.5-air",
-    "use_for": { "theme_naming": true }
+    "use_for": { "theme_naming": true },
+    "prompt": ""
   },
 
   "upscaling": {

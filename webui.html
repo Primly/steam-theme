@@ -217,6 +217,14 @@
     <div class="switch"><input type="checkbox" id="aiNaming"><span>Theme naming + mood classification</span></div>
   </div>
   <div class="row">
+    <label for="aiPrompt" class="top">Naming prompt</label>
+    <textarea id="aiPrompt" style="min-height:110px"></textarea>
+    <button onclick="setV('aiPrompt', AI_DEFAULT_PROMPT)" title="Restore the built-in prompt">Reset</button>
+  </div>
+  <p class="hint">Pre-filled with the built-in default as a guide — edit freely. <code>{game}</code> and
+    <code>{colors}</code> are replaced with the game name and dominant colors per theme. Leave unchanged (or empty)
+    to keep the default; if your prompt doesn't ask for the JSON response, that instruction is added automatically.</p>
+  <div class="row">
     <button onclick="runTest('ai', {base_url: v('aiBase'), api_key: v('aiKey'), model: modelVal()}, 'aiResult')">Test connection</button>
     <div class="result" id="aiResult"></div>
   </div>
@@ -369,6 +377,9 @@
 <script>
 let cfg = {};
 let PLATFORM = "win32";
+
+// Keep in sync with DEFAULT_NAMING_PROMPT in palette.py
+const AI_DEFAULT_PROMPT = `This is key art from the game '{game}'. Its dominant colors are {colors}. Describe the mood and give this desktop theme a short, evocative name. Respond with ONLY a JSON object: {"theme_name": "<short evocative name>", "mood": "<e.g. dark fantasy, neon cyberpunk, cozy pixel>", "appearance": "dark"|"light", "palette_mode": "material"|"muted"|"colorful"}`;
 
 function applyPlatform(p) {
   const win = p === "win32";
@@ -543,6 +554,7 @@ async function load() {
   setC("aiEnabled", ai.enabled); setV("aiBase", ai.base_url); setV("aiKey", ai.api_key);
   populateModelSelect([], ai.model);
   setC("aiNaming", (ai.use_for || {theme_naming: true}).theme_naming !== false);
+  setV("aiPrompt", ai.prompt || AI_DEFAULT_PROMPT);
   const up = cfg.upscaling || {};
   setC("upEnabled", up.enabled); setV("upProvider", up.provider || "topaz");
   setV("topazKey", (cfg.topaz || {}).api_key); setV("topazModel", (cfg.topaz || {}).model || "Standard V2");
@@ -589,6 +601,8 @@ async function save(apply) {
   cfg.ai = {enabled: document.getElementById("aiEnabled").checked,
             base_url: v("aiBase"), api_key: v("aiKey"), model: modelVal(),
             use_for: {theme_naming: document.getElementById("aiNaming").checked}};
+  const ap = v("aiPrompt");
+  if (ap && ap !== AI_DEFAULT_PROMPT) cfg.ai.prompt = ap;  // unchanged/empty = built-in default
   delete cfg.vlm; delete cfg.openrouter;
   cfg.upscaling = {enabled: document.getElementById("upEnabled").checked, provider: v("upProvider")};
   const tmodels = {};

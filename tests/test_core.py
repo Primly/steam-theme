@@ -291,6 +291,39 @@ class TestReapplyFromCacheHold(unittest.TestCase):
         self.assertEqual(state["last_identity"], "440")
 
 
+class TestNamingPrompt(unittest.TestCase):
+    PAL = {"colors": ["#112233", "#445566", "#778899"]}
+
+    def test_default_when_unset(self):
+        import palette
+        out = palette.build_naming_prompt({}, "Hades II", self.PAL)
+        self.assertIn("Hades II", out)
+        self.assertIn("#112233, #445566, #778899", out)
+        self.assertIn('"theme_name"', out)
+        self.assertNotIn("{game}", out)
+        self.assertNotIn("{colors}", out)
+
+    def test_custom_prompt_with_placeholders(self):
+        import palette
+        cfg = {"ai": {"prompt": "Rate the vibes of {game} using {colors}."}}
+        out = palette.build_naming_prompt(cfg, "Silksong", self.PAL)
+        self.assertIn("Rate the vibes of Silksong using", out)
+        # JSON contract appended so parsing can't silently break
+        self.assertIn('"theme_name"', out)
+
+    def test_custom_prompt_with_contract_not_duplicated(self):
+        import palette
+        cfg = {"ai": {"prompt": 'Name it. Return {"theme_name": "x"}.'}}
+        out = palette.build_naming_prompt(cfg, "Hades II", self.PAL)
+        self.assertEqual(out.count('"theme_name"'), 1)
+
+    def test_empty_prompt_falls_back(self):
+        import palette
+        cfg = {"ai": {"prompt": "   "}}
+        out = palette.build_naming_prompt(cfg, "Hades II", self.PAL)
+        self.assertTrue(out.startswith("This is key art from the game"))
+
+
 class TestConfigLoading(unittest.TestCase):
     def test_example_config_is_valid_and_placeholder_blanked(self):
         # simulate a fresh checkout: no config.json next to the code? there is
