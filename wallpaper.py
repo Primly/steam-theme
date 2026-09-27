@@ -103,16 +103,29 @@ def _prune_old_composites(cache_dir, keep_paths):
                 pass
 
 
-def compose_wallpaper(monitors, art, out_path, log=print):
+def first_art_path(art):
+    """First usable image path in an art dict (skips metadata like the
+    hero_candidates list or the _rotate slideshow spec)."""
+    return art.get("hero") or next(
+        (v for k, v in art.items()
+         if isinstance(v, str) and not k.startswith("_")), None)
+
+
+def compose_wallpaper(monitors, art, out_path, log=print, prune=True):
     """Windows strategy: ONE span-style image over the bounding box of all
-    monitors; Windows' 'Span' wallpaper style maps it 1:1."""
+    monitors; Windows' 'Span' wallpaper style maps it 1:1.
+
+    Pass prune=False when composing several slideshow variants into the same
+    folder back-to-back (each call would otherwise delete the previous
+    variant); prune once at the end with _prune_old_composites(dir, variants).
+    """
     min_x = min(m["rect"][0] for m in monitors)
     min_y = min(m["rect"][1] for m in monitors)
     max_x = max(m["rect"][2] for m in monitors)
     max_y = max(m["rect"][3] for m in monitors)
     W, H = max_x - min_x, max_y - min_y
 
-    hero = art.get("hero") or next(iter(art.values()))
+    hero = first_art_path(art)
     canvas = _cover(Image.open(hero).convert("RGB"), W, H)  # fills any gaps
 
     for m in monitors:
@@ -122,8 +135,9 @@ def compose_wallpaper(monitors, art, out_path, log=print):
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     canvas.save(out_path, "JPEG", quality=92)
-    _prune_old_composites(os.path.dirname(os.path.abspath(out_path)),
-                          [out_path])
+    if prune:
+        _prune_old_composites(os.path.dirname(os.path.abspath(out_path)),
+                              [out_path])
     log(f"  [wall] composed {W}x{H} span wallpaper -> {out_path}")
     return out_path
 

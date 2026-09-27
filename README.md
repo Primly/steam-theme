@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.3.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.4.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -22,6 +22,8 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
   emulators).
 - **Fetches** proper key art — hero, logo and icon images (SteamGridDB →
   Steam CDN → wallhaven), cached per game so nothing is downloaded twice.
+  Several hero candidates per game: **pick your favorite** in the gallery or
+  **rotate them as a slideshow**.
 - **Extracts a palette** — 16 colors, a WCAG-AA-checked accent, and a
   dark/light decision from the artwork itself.
 - **Names the theme** with an AI/VLM of your choice (local LM Studio/Ollama
@@ -234,6 +236,8 @@ detect ──▶ fetch art ──▶ palette ──▶ (AI naming) ──▶ (up
 2. **Artwork** — per role (hero / logo / icon), with fallbacks:
    SteamGridDB → Steam CDN (`library_hero.jpg`, `logo.png`, `header.jpg`)
    → wallhaven search. Downloaded once per game, cached in `cache/`.
+   Heroes come in multiples (`hero.count`, default 6) — see
+   [Hero artwork](#️-hero-artwork-pick-or-rotate).
 3. **Palette** — 16-color median cut (Colorful / Material / Muted styles),
    an accent checked for WCAG contrast, and a dark/light decision from the
    art's luminance. You can pin everything to dark (default), light, or auto.
@@ -265,7 +269,7 @@ the hero, so wordmarks stay crisp instead of being zoomed and cropped.
 
 | Section | What it controls |
 |---|---|
-| **General** | dark/light preference, palette style, poll interval, excluded app IDs, *now playing* toggle |
+| **General** | dark/light preference, palette style, hero artwork (pick/rotate), poll interval, excluded app IDs, *now playing* toggle |
 | **Non-Steam games** | process watch list (Epic/GOG/emulators) |
 | **Steam** | API key, auto-detected SteamID64, live test |
 | **Artwork sources** | SteamGridDB / wallhaven keys, live test |
@@ -295,6 +299,7 @@ UI takes effect without restarts.
 | `appearance_preference` | `"dark"` | `dark` / `light` / `auto` (from art luminance) |
 | `system_mode` / `app_mode` | `"match"` | `match` the theme, or force `dark`/`light` |
 | `palette_mode` | `"colorful"` | `colorful` / `material` / `muted` |
+| `hero.count` / `mode` / `interval_minutes` / `shuffle` | `6` / `"pick"` / `30` / `false` | Hero candidates per game; `pick` one in the gallery or `rotate` as a slideshow |
 | `ai.enabled` / `base_url` / `api_key` / `model` | `false` | OpenAI-compatible VLM for theme naming |
 | `ai.prompt` | built-in | Custom naming prompt; `{game}`/`{colors}` placeholders |
 | `upscaling.enabled` / `provider` | `false` | `topaz` or `ai` (OpenAI images endpoint) |
@@ -319,6 +324,32 @@ The hold releases automatically the moment you actually play something, and
 the UI shows a banner with a **Resume auto-theming now** button. The
 Re-apply / Regenerate / Full refetch buttons also respect the hold — they
 re-run the theme you're looking at, not whatever Steam happens to report.
+
+## 🖼️ Hero artwork: pick or rotate
+
+SteamGridDB usually has several heroes for a game, so the app fetches up to
+`hero.count` (default 6, max 8) and keeps them all in the game's cache
+folder. Fetching is free; what you do with them is your choice:
+
+- **Pick one** (default) — the current theme's gallery card shows a
+  thumbnail strip of every candidate. Clicking one regenerates the theme
+  around it (palette, VLM name, composites). The choice is stored per game
+  (`hero_choice.json`) and survives Regenerate; *Full refetch* wipes it
+  along with the rest of the cache. If the new hero needs upscaling, that
+  one upscale runs (a Topaz credit, cached afterwards).
+- **Rotate** — every candidate becomes a wallpaper variant and the desktop
+  cycles them on your interval (`hero.interval_minutes`, optional shuffle).
+  Windows does this with a real `.theme` `[Slideshow]` (one span image per
+  candidate — Settings → Personalization shows “Slideshow”); Linux switches
+  each screen to Plasma's `org.kde.slideshow` plugin over per-role
+  `slides/` folders, so all monitors rotate in lockstep when shuffle is
+  off. Gallery re-applies keep rotating. **Heads-up:** rotate upscales
+  *every* candidate, so first-time Topaz credit cost scales with
+  `hero.count` (each upscale is cached per candidate + model — later runs
+  are free).
+
+Lowering `hero.count` prunes the extra candidates on the next run; raising
+it tops the cache back up.
 
 ## 🎨 AI / VLM theme naming
 
@@ -513,7 +544,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 65 tests
+python -m unittest discover -s tests -v   # 95 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -550,6 +581,10 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.4.0** — hero artwork choice: up to 8 SteamGridDB hero candidates per
+  game, a thumbnail picker on the current theme's gallery card, and a
+  rotate mode (Windows `.theme` slideshow / Plasma slideshow plugin) with
+  configurable interval and shuffle.
 - **1.3.0** — custom AI naming prompts: editable prompt field in the config
   UI with the built-in default as a guide, `{game}`/`{colors}` placeholders,
   and automatic JSON-contract appending.

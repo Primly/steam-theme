@@ -14,6 +14,8 @@ API:
   POST /api/test/ai             {base_url, api_key, model}   (OpenAI-compatible)
   POST /api/test/topaz          {api_key}                    (auth check, no credits)
   POST /api/run-now             run the pipeline once in a background thread
+  GET  /api/art?key&role&i      cached art; role=hero&i=N serves candidate N
+  POST /api/hero-choice         {key, index} pick a hero candidate + regenerate
 """
 
 import json
@@ -180,12 +182,16 @@ def _gallery():
                 p = json.load(f)
         except (OSError, ValueError):
             continue
+        import artwork
+        cands = artwork.hero_candidates(folder)
         items.append({
             "key": entry,
             "theme_name": p.get("theme_name") or entry,
             "accent": p.get("accent"),
             "appearance": p.get("appearance"),
-            "has_art": os.path.exists(os.path.join(folder, "hero.jpg")),
+            "has_art": bool(cands),
+            "hero_count": len(cands),
+            "hero_active": artwork.hero_choice(folder),
             "current": entry == current,
         })
     return items
@@ -308,15 +314,32 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/gallery":
             self._send(200, {"ok": True, "themes": _gallery()})
         elif path == "/api/art":
+            import artwork
             import main as app
             q = parse_qs(urlparse(self.path).query)
             key, role = q.get("key", [""])[0], q.get("role", ["hero"])[0]
             if role not in ("hero", "logo", "icon"):
                 self._send(400, {"error": "bad role"})
                 return
+            raw_i = q.get("i", [""])[0]
+            idx = None
+            if raw_i:
+                try:
+                    idx = int(raw_i)
+                except ValueError:
+                    self._send(400, {"error": "bad index"})
+                    return
             try:
-                img = app.safe_join(app.cfg_path(load_config(), "cache_dir", "cache"),
-                                    key, f"{role}.jpg")
+                cache = app.safe_join(
+                    app.cfg_path(load_config(), "cache_dir", "cache"), key)
+                if role == "hero":
+                    cands = artwork.hero_candidates(cache)
+                    img = (cands[idx] if idx is not None and 0 <= idx < len(cands)
+                           else artwork.active_hero(cache) if idx is None else None)
+                else:
+                    img = os.path.join(cache, f"{role}.jpg")
+                if not img:
+                    raise OSError("no such candidate")
                 with open(img, "rb") as f:
                     data = f.read()
                 self._send(200, content_type="image/jpeg", raw=data)
@@ -394,6 +417,47 @@ class Handler(BaseHTTPRequestHandler):
                     log(f"redo error: {e}")
             threading.Thread(target=work, daemon=True).start()
             self._send(200, {"ok": True, "detail": f"{mode} started; watch the log"})
+        elif path == "/api/hero-choice":
+            import re as _re
+            import artwork
+            key = str(body.get("key") or "")
+            if not _re.fullmatch(r"[A-Za-z0-9._-]+", key):
+                self._send(400, {"ok": False, "error": "bad theme key"})
+                return
+            try:
+                index = int(body.get("index"))
+            except (TypeError, ValueError):
+                self._send(400, {"ok": False, "error": "bad index"})
+                return
+            import main as app
+            cfg = app.load_config()
+            state = app.load_state(cfg)
+            current = str(state.get("last_cache_key")
+                          or state.get("last_appid") or "")
+            if key != current:
+                self._send(400, {"ok": False,
+                                 "error": "hero picks apply to the current theme "
+                                          "— apply this theme from the gallery first"})
+                return
+            cache = app.safe_join(app.cfg_path(cfg, "cache_dir", "cache"), key)
+            try:
+                artwork.set_hero_choice(cache, index)
+            except ValueError as e:
+                self._send(400, {"ok": False, "error": str(e)})
+                return
+
+            def work():
+                log = app._log_factory(cfg)
+                log(f"hero choice: candidate #{index + 1} selected for {key} "
+                    "— regenerating the theme")
+                try:
+                    app.check_once(cfg, log, force=True)
+                except Exception as e:
+                    log(f"hero-choice regenerate error: {e}")
+            threading.Thread(target=work, daemon=True).start()
+            self._send(200, {"ok": True,
+                             "detail": f"hero #{index + 1} selected — regenerating "
+                                       "(a new hero may need one upscale; watch the log)"})
         elif path == "/api/apply-theme":
             import re as _re
             key = str(body.get("key") or "")

@@ -236,7 +236,12 @@ MTSM=DABJDKT
 """
 
 
-def write_theme_file(path, display_name, wallpaper_path, palette):
+def write_theme_file(path, display_name, wallpaper_path, palette,
+                     variants=None, interval_minutes=30, shuffle=False):
+    """Write the .theme INI. With more than one variant (hero slideshow mode)
+    a [Slideshow] section rotates them — Interval is in milliseconds and
+    Wallpaper= still points at the first variant as the static fallback.
+    """
     # .theme INI is safest as ASCII; strip any fancy characters from game names
     display_name = _ini_safe(display_name.encode("ascii", "replace").decode())
     content = THEME_TEMPLATE.format(
@@ -244,6 +249,22 @@ def write_theme_file(path, display_name, wallpaper_path, palette):
         wallpaper=os.path.abspath(wallpaper_path),
         colorization=_hex_to_abgr(palette["accent"]),
     )
+    variants = [os.path.abspath(v) for v in (variants or [])]
+    if len(variants) > 1:
+        # Microsoft's format: ImagesRootPath is REQUIRED for a local-image
+        # slideshow (Item_N_Path only works alongside it, limiting the show
+        # to the listed files). Without the root the whole section is
+        # silently ignored and the desktop stays in static-picture mode.
+        root = os.path.dirname(variants[0])
+        lines = ["", "[Slideshow]",
+                 f"Interval={max(1, int(interval_minutes)) * 60 * 1000}",
+                 f"Shuffle={1 if shuffle else 0}",
+                 f"ImagesRootPath={_ini_safe(root, 1024)}"]
+        # paths are our own cache files, but _ini_safe strips any control
+        # chars a weird base path could otherwise smuggle into the INI
+        lines += [f"Item{i}Path={_ini_safe(v, 1024)}"
+                  for i, v in enumerate(variants)]
+        content += "\n".join(lines) + "\n"
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
     return path

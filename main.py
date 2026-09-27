@@ -27,6 +27,7 @@ import extras
 import palette as palette_mod
 import steamdetect
 import upscale
+import wallpaper as wallpaper_mod
 
 if sys.platform == "win32":
     import theme as theme_mod
@@ -34,7 +35,7 @@ else:
     import linux_theme as theme_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 
 def safe_join(base, *parts):
@@ -105,6 +106,19 @@ def save_state(cfg, state):
         json.dump(state, f, indent=2)
 
 
+def _hero_settings(cfg):
+    """Sanitized cfg['hero']: {"mode": pick|rotate, "interval_minutes": int,
+    "shuffle": bool}. Tolerates junk types from hand-edited configs."""
+    h = cfg.get("hero") if isinstance(cfg.get("hero"), dict) else {}
+    mode = h.get("mode") if h.get("mode") in ("pick", "rotate") else "pick"
+    try:
+        interval = int(h.get("interval_minutes", 30) or 30)
+    except (TypeError, ValueError):
+        interval = 30
+    return {"mode": mode, "interval_minutes": max(1, min(interval, 24 * 60)),
+            "shuffle": bool(h.get("shuffle"))}
+
+
 def run_pipeline(cfg, game, log, dry_run=False):
     appid, name = game.get("appid"), game["name"]
     # custom (non-Steam) games may have no appid; cache under a stable key
@@ -147,6 +161,31 @@ def run_pipeline(cfg, game, log, dry_run=False):
 
     # upscale after VLM naming so the mood can steer generative Topaz models
     up_ctx = {"game": name, "mood": mood}
+    hero_set = _hero_settings(cfg)
+    candidates = [c for c in (art.get("hero_candidates") or [])
+                  if isinstance(c, str)]
+    rotate_ok = hero_set["mode"] == "rotate" and len(candidates) > 1
+    if rotate_ok:
+        # every candidate becomes a wallpaper variant, so upscale them ALL
+        # toward the hero monitor (cached per candidate+model: only the first
+        # rotate run per game/model spends Topaz credits)
+        hero_mon = next((m for m in monitors if m["role"] == "hero"), None)
+        if hero_mon:
+            if cfg.get("upscaling", {}).get("enabled"):
+                log(f"  [hero] rotate mode: {len(candidates)} candidates — "
+                    "each may need an upscale (Topaz credits scale with the "
+                    "hero count; cached afterwards)")
+            hw = hero_mon["rect"][2] - hero_mon["rect"][0]
+            hh = hero_mon["rect"][3] - hero_mon["rect"][1]
+            try:
+                active_idx = candidates.index(art.get("hero"))
+            except ValueError:
+                active_idx = 0
+            candidates = [upscale.maybe_upscale(c, hw, hh, cfg, log,
+                                                context=up_ctx, role="hero")
+                          for c in candidates]
+            art["hero"] = candidates[active_idx]
+            art["hero_candidates"] = candidates
     for m in monitors:
         role = m["role"]
         if role in art:
@@ -165,10 +204,45 @@ def run_pipeline(cfg, game, log, dry_run=False):
     # Unique filename per run: Windows keys its TranscodedWallpaper cache by
     # path, so reusing the same filename would silently keep the OLD image.
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    wallpaper = theme_mod.compose_wallpaper(monitors, art,
-                                            os.path.join(cache, f"wallpaper_{stamp}.jpg"), log)
+    variants = None
+    if rotate_ok and sys.platform == "win32":
+        # Windows: one span variant per candidate in a dedicated slides/
+        # folder (the .theme [Slideshow] section's ImagesRootPath must point
+        # at a folder containing ONLY the variants); the theme rotates them.
+        # prune=False while composing (each call would otherwise delete the
+        # previous variant), then a single prune.
+        import shutil
+        slides = os.path.join(cache, "slides")
+        shutil.rmtree(slides, ignore_errors=True)
+        os.makedirs(slides, exist_ok=True)
+        variants = []
+        for i, cand in enumerate(candidates):
+            vp = os.path.join(slides, f"wallpaper_{stamp}_{i + 1}.jpg")
+            variants.append(theme_mod.compose_wallpaper(
+                monitors, {**art, "hero": cand}, vp, log, prune=False))
+        wallpaper_mod._prune_old_composites(cache, [])
+        wallpaper = variants[0]
+        log(f"  [hero] rotate: {len(variants)} span variants, "
+            f"{hero_set['interval_minutes']} min interval"
+            f"{', shuffle' if hero_set['shuffle'] else ''}")
+    else:
+        if rotate_ok:
+            # Linux: compose_wallpaper builds per-role slides/ folders and a
+            # slideshow.json that write_theme_file/apply_theme pick up
+            art["_rotate"] = {"candidates": candidates,
+                              "interval_minutes": hero_set["interval_minutes"],
+                              "shuffle": hero_set["shuffle"]}
+        elif sys.platform == "win32":
+            # switched back to pick mode: clear this game's stale slideshow
+            import shutil
+            shutil.rmtree(os.path.join(cache, "slides"), ignore_errors=True)
+        wallpaper = theme_mod.compose_wallpaper(
+            monitors, art, os.path.join(cache, f"wallpaper_{stamp}.jpg"), log)
     theme_path = theme_mod.write_theme_file(
-        os.path.join(cache, theme_mod.THEME_FILENAME), theme_name, wallpaper, pal)
+        os.path.join(cache, theme_mod.THEME_FILENAME), theme_name, wallpaper,
+        pal, variants=variants,
+        interval_minutes=hero_set["interval_minutes"],
+        shuffle=hero_set["shuffle"])
 
     with open(os.path.join(cache, "palette.json"), "w", encoding="utf-8") as f:
         json.dump({**pal, "wallpaper": os.path.abspath(wallpaper)}, f, indent=2)

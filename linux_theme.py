@@ -28,6 +28,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 from datetime import datetime
 
@@ -105,14 +106,19 @@ def compose_wallpaper(monitors, art, out_path, log=print):
     Tiles are rendered at PHYSICAL resolution (logical size x scale factor)
     and named wallpaper_<role>_<stamp>.jpg so write_theme_file can map them
     back to roles. Returns the hero tile path (the 'primary' wallpaper).
+
+    Hero slideshow mode (art['_rotate'] with >1 candidates): additionally
+    renders one tile per candidate per role into slides/<role>/NN.jpg and
+    writes slideshow.json — write_theme_file merges it into the manifest and
+    apply_theme switches those screens to the org.kde.slideshow plugin.
     """
     import wallpaper as wall
 
     cache_dir = os.path.dirname(os.path.abspath(out_path))
     os.makedirs(cache_dir, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    hero = art.get("hero") or next(iter(art.values()))
-    paths = {}
+    hero = wall.first_art_path(art)
+    paths, role_mon = {}, {}
     for m in monitors:
         scale = m.get("scale", 1.0)
         w = round((m["rect"][2] - m["rect"][0]) * scale)
@@ -121,15 +127,62 @@ def compose_wallpaper(monitors, art, out_path, log=print):
         p = os.path.join(cache_dir, f"wallpaper_{m['role']}_{stamp}.jpg")
         tile.save(p, "JPEG", quality=92)
         paths[m["role"]] = p
+        role_mon[m["role"]] = (m, w, h)  # last monitor of a role wins
         log(f"  [wall] {m['role']} tile {w}x{h} -> {p}")
     wall._prune_old_composites(cache_dir, paths.values())
+
+    ss_path = os.path.join(cache_dir, "slideshow.json")
+    slides_root = os.path.join(cache_dir, "slides")
+    rotate = art.get("_rotate")
+    candidates = [c for c in (rotate.get("candidates") if isinstance(rotate, dict) else [])
+                  if isinstance(c, str) and os.path.exists(c)]
+    if len(candidates) > 1:
+        folders = {}
+        for role, (m, w, h) in role_mon.items():
+            folder = os.path.join(slides_root, role)
+            os.makedirs(folder, exist_ok=True)
+            for old in glob.glob(os.path.join(folder, "*.jpg")):
+                try:
+                    os.remove(old)
+                except OSError:
+                    pass
+            folders[role] = folder
+            for i, cand in enumerate(candidates):
+                vart = dict(art)
+                vart["hero"] = cand
+                tile = compose_monitor_tile(m, vart, cand, w, h, log)
+                tile.save(os.path.join(folder, f"{i:02d}.jpg"),
+                          "JPEG", quality=92)
+            log(f"  [wall] {role}: {len(candidates)} slideshow tiles -> {folder}")
+        try:
+            interval_s = max(60, int(rotate.get("interval_minutes", 30)) * 60)
+        except (TypeError, ValueError):
+            interval_s = 1800
+        with open(ss_path, "w", encoding="utf-8") as f:
+            json.dump({"folders": folders, "interval_s": interval_s,
+                       "shuffle": bool(rotate.get("shuffle"))}, f, indent=2)
+    else:
+        # not rotating: clear any previous slideshow state for this game
+        try:
+            os.remove(ss_path)
+        except OSError:
+            pass
+        if os.path.isdir(slides_root):
+            shutil.rmtree(slides_root, ignore_errors=True)
     return paths.get("hero") or next(iter(paths.values()))
 
 
 # ---------------------------------------------------- theme manifest + apply
 
-def write_theme_file(path, display_name, wallpaper_path, palette):
-    """JSON manifest instead of a Windows .theme INI: role -> tile path."""
+def write_theme_file(path, display_name, wallpaper_path, palette,
+                     variants=None, interval_minutes=30, shuffle=False):
+    """JSON manifest instead of a Windows .theme INI: role -> tile path.
+
+    variants/interval_minutes/shuffle are the Windows .theme slideshow knobs
+    and are ignored here — on KDE the slideshow spec travels via the
+    slideshow.json that compose_wallpaper wrote next to the tiles (it is
+    merged into the manifest so gallery re-applies keep rotating).
+    """
     cache_dir = os.path.dirname(os.path.abspath(wallpaper_path))
     walls = {}
     for role in ("hero", "logo", "icon"):
@@ -141,6 +194,14 @@ def write_theme_file(path, display_name, wallpaper_path, palette):
                 "primary": os.path.abspath(wallpaper_path),
                 "accent": palette.get("accent"),
                 "appearance": palette.get("appearance")}
+    try:
+        with open(os.path.join(cache_dir, "slideshow.json"),
+                  encoding="utf-8") as f:
+            ss = json.load(f)
+        if isinstance(ss.get("folders"), dict) and ss["folders"]:
+            manifest["slideshow"] = ss
+    except (OSError, ValueError):
+        pass
     with open(path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
     return path
@@ -167,26 +228,64 @@ def _wallpaper_script(screen_wall):
     )
 
 
+def _slideshow_script(screen_folder, interval_s, shuffle):
+    """plasmashell JS: set each screen containment to a folder slideshow
+    (org.kde.slideshow). Same injection discipline as _wallpaper_script:
+    paths go through json.dumps. SlidePaths takes a JS array of file://
+    folder URLs; SlideInterval is seconds."""
+    mapping = {str(i): "file://" + p for i, p in screen_folder.items()}
+    return (
+        "var folders = " + json.dumps(mapping) + ";"
+        "var ds = desktops();"
+        "for (var i = 0; i < ds.length; i++) {"
+        "  var d = ds[i]; var p = folders[String(d.screen)];"
+        "  if (!p) continue;"
+        "  d.wallpaperPlugin = 'org.kde.slideshow';"
+        "  d.currentConfigGroup = ['Wallpaper', 'org.kde.slideshow', 'General'];"
+        "  d.writeConfig('SlidePaths', [p]);"
+        "  d.writeConfig('SlideInterval', " + str(int(interval_s)) + ");"
+        "  d.writeConfig('Shuffle', " + ("true" if shuffle else "false") + ");"
+        "  d.writeConfig('FillMode', 0);"
+        "}"
+    )
+
+
 def apply_theme(theme_path, log=print, cfg=None):
-    """Push the manifest's per-role tiles to their screens via plasmashell."""
+    """Push the manifest's per-role tiles to their screens via plasmashell.
+    Roles with a slides/ folder (hero slideshow mode) get the
+    org.kde.slideshow plugin; the rest get a static org.kde.image tile."""
     with open(theme_path, encoding="utf-8") as f:
         manifest = json.load(f)
     walls = manifest.get("wallpapers") or {}
+    ss = manifest.get("slideshow") or {}
+    folders = ss.get("folders") or {}
     monitors = enumerate_monitors()
     assign_roles(monitors, (cfg or {}).get("monitors", []), log)
     # enumerate order == kscreen output order == plasma screen indices
-    screen_wall = {}
+    screen_wall, screen_slide = {}, {}
     for i, m in enumerate(monitors):
+        folder = folders.get(m["role"])
+        if folder and os.path.isdir(folder):
+            screen_slide[i] = folder
+            continue
         p = walls.get(m["role"]) or manifest.get("primary")
         if p and os.path.exists(p):
             screen_wall[i] = p
-    if not screen_wall:
+    if not screen_wall and not screen_slide:
         log("  [kde] no wallpaper tiles found; manifest stale?")
         return
-    _run(["qdbus", "org.kde.plasmashell", "/PlasmaShell",
-          "org.kde.PlasmaShell.evaluateScript",
-          _wallpaper_script(screen_wall)], timeout=30)
-    log(f"  [kde] wallpapers applied to {len(screen_wall)} screen(s)")
+    if screen_wall:
+        _run(["qdbus", "org.kde.plasmashell", "/PlasmaShell",
+              "org.kde.PlasmaShell.evaluateScript",
+              _wallpaper_script(screen_wall)], timeout=30)
+    if screen_slide:
+        _run(["qdbus", "org.kde.plasmashell", "/PlasmaShell",
+              "org.kde.PlasmaShell.evaluateScript",
+              _slideshow_script(screen_slide, ss.get("interval_s", 1800),
+                                ss.get("shuffle"))], timeout=30)
+    log(f"  [kde] wallpapers applied to "
+        f"{len(screen_wall) + len(screen_slide)} screen(s)"
+        + (f" ({len(screen_slide)} slideshow)" if screen_slide else ""))
 
 
 # --------------------------------------------------------------- KDE colors

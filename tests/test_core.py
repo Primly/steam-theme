@@ -14,6 +14,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import main  # noqa: E402
+import artwork  # noqa: E402
 import wallpaper  # noqa: E402
 import extras  # noqa: E402
 import srgb_effects  # noqa: E402
@@ -289,6 +290,175 @@ class TestReapplyFromCacheHold(unittest.TestCase):
         self.assertEqual(state["manual_hold"]["name"], "Witcher 3")
         self.assertGreater(state["manual_hold"]["held_at"], 0)
         self.assertEqual(state["last_identity"], "440")
+
+
+class TestHeroCandidates(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(
+            self.dir, ignore_errors=True))
+
+    def _mk(self, name):
+        p = os.path.join(self.dir, name)
+        with open(p, "wb") as f:
+            f.write(b"x")
+        return p
+
+    def _names(self, paths):
+        return [os.path.basename(p) for p in paths]
+
+    def test_numeric_sort_order(self):
+        # numbers can pass 9 as files are pruned/re-fetched — lexical sort
+        # would put hero_10 before hero_2
+        self._mk("hero_10.jpg"); self._mk("hero_2.jpg"); self._mk("hero_1.jpg")
+        self.assertEqual(self._names(artwork.hero_candidates(self.dir)),
+                         ["hero_1.jpg", "hero_2.jpg", "hero_10.jpg"])
+
+    def test_legacy_hero_jpg_sorts_first(self):
+        self._mk("hero_1.jpg"); self._mk("hero.jpg")
+        self.assertEqual(self._names(artwork.hero_candidates(self.dir)),
+                         ["hero.jpg", "hero_1.jpg"])
+
+    def test_next_dest_avoids_collisions(self):
+        taken = [self._mk("hero_2.jpg")]
+        dest = artwork._next_hero_dest(self.dir, taken)
+        self.assertEqual(os.path.basename(dest), "hero_3.jpg")
+        self.assertEqual(os.path.basename(artwork._next_hero_dest(self.dir, [])),
+                         "hero_1.jpg")
+
+    def test_choice_defaults_and_clamps(self):
+        self._mk("hero_1.jpg")
+        self.assertEqual(artwork.hero_choice(self.dir), 0)  # no choice file
+        artwork.set_hero_choice(self.dir, 0)
+        with open(os.path.join(self.dir, "hero_choice.json"), "w") as f:
+            json.dump({"index": 9}, f)  # tampered past the end
+        self.assertEqual(artwork.hero_choice(self.dir), 0)  # clamped to n-1
+
+    def test_set_choice_validates_and_persists(self):
+        self._mk("hero_1.jpg"); self._mk("hero_2.jpg")
+        artwork.set_hero_choice(self.dir, 1)
+        self.assertEqual(artwork.hero_choice(self.dir), 1)
+        self.assertTrue(artwork.active_hero(self.dir).endswith("hero_2.jpg"))
+        with self.assertRaises(ValueError):
+            artwork.set_hero_choice(self.dir, 2)
+        with self.assertRaises(ValueError):
+            artwork.set_hero_choice(self.dir, -1)
+
+    def test_set_choice_without_candidates(self):
+        with self.assertRaises(ValueError):
+            artwork.set_hero_choice(self.dir, 0)
+
+    def test_active_hero_empty_cache(self):
+        self.assertIsNone(artwork.active_hero(self.dir))
+
+
+class TestSgdbMultiHero(unittest.TestCase):
+    def test_heroes_sliced_to_count(self):
+        def fake_get(path, key, params=None):
+            if path == "/games/steam/440":
+                return {"data": {"id": 7}}
+            if path == "/heroes/game/7":
+                return {"data": [{"url": f"u{i}"} for i in range(10)]}
+            if path == "/logos/game/7":
+                return {"data": [{"url": "logo"}]}
+            if path == "/icons/game/7":
+                return {"data": [{"url": "icon"}]}
+            return None
+        with mock.patch.object(artwork, "_sgdb_get", fake_get):
+            out = artwork._sgdb_art(440, "k", hero_count=6)
+        self.assertEqual(out["heroes"], [f"u{i}" for i in range(6)])
+        self.assertEqual(out["logo"], "logo")
+        self.assertEqual(out["icon"], "icon")
+
+    def test_no_game_id_yields_empty(self):
+        with mock.patch.object(artwork, "_sgdb_get", lambda *a, **k: None):
+            out = artwork._sgdb_art(440, "k", hero_count=6)
+        self.assertEqual(out, {"heroes": [], "logo": None, "icon": None})
+
+
+class TestHeroSettings(unittest.TestCase):
+    def test_defaults(self):
+        self.assertEqual(main._hero_settings({}),
+                         {"mode": "pick", "interval_minutes": 30,
+                          "shuffle": False})
+
+    def test_junk_sanitized(self):
+        s = main._hero_settings({"hero": {"mode": "bogus",
+                                          "interval_minutes": "x",
+                                          "shuffle": 1}})
+        self.assertEqual(s["mode"], "pick")
+        self.assertEqual(s["interval_minutes"], 30)
+        self.assertTrue(s["shuffle"])
+
+    def test_non_dict_hero_tolerated(self):
+        self.assertEqual(main._hero_settings({"hero": "rotate"})["mode"],
+                         "pick")
+
+    def test_interval_clamped(self):
+        s = main._hero_settings({"hero": {"mode": "rotate",
+                                          "interval_minutes": -5}})
+        self.assertEqual(s["interval_minutes"], 1)
+        s = main._hero_settings({"hero": {"mode": "rotate",
+                                          "interval_minutes": 99999}})
+        self.assertEqual(s["interval_minutes"], 1440)
+        # 0/None are falsy -> fall back to the default rather than clamping
+        self.assertEqual(main._hero_settings(
+            {"hero": {"mode": "rotate", "interval_minutes": 0}}
+        )["interval_minutes"], 30)
+
+
+@unittest.skipUnless(sys.platform == "win32",
+                     "theme.py is the Windows-only implementation")
+class TestWindowsSlideshowTheme(unittest.TestCase):
+    def test_slideshow_block_with_variants(self):
+        pal = {"accent": "#AABBCC"}
+        with tempfile.TemporaryDirectory() as d:
+            v1 = os.path.join(d, "v1.jpg")
+            v2 = os.path.join(d, "v2.jpg")
+            for v in (v1, v2):
+                with open(v, "wb") as f:
+                    f.write(b"x")
+            path = os.path.join(d, "t.theme")
+            theme.write_theme_file(path, "Show", v1, pal, variants=[v1, v2],
+                                   interval_minutes=15, shuffle=True)
+            with open(path, encoding="utf-8") as f:
+                content = f.read()
+        self.assertIn("[Slideshow]", content)
+        self.assertIn("Interval=900000", content)  # 15 min in ms
+        self.assertIn("Shuffle=1", content)
+        # ImagesRootPath is required by the .theme format — without it the
+        # apply engine silently ignores the whole [Slideshow] section
+        self.assertIn(f"ImagesRootPath={os.path.dirname(os.path.abspath(v1))}",
+                      content)
+        self.assertIn(f"Item0Path={os.path.abspath(v1)}", content)
+        self.assertIn(f"Item1Path={os.path.abspath(v2)}", content)
+        # static fallback still points at the first variant
+        self.assertIn(f"Wallpaper={os.path.abspath(v1)}", content)
+
+    def test_no_slideshow_block_without_variants(self):
+        pal = {"accent": "#AABBCC"}
+        with tempfile.TemporaryDirectory() as d:
+            v1 = os.path.join(d, "v1.jpg")
+            with open(v1, "wb") as f:
+                f.write(b"x")
+            path = os.path.join(d, "t.theme")
+            theme.write_theme_file(path, "Static", v1, pal)
+            with open(path, encoding="utf-8") as f:
+                content = f.read()
+            # a single variant is not a slideshow either
+            theme.write_theme_file(path, "Static", v1, pal, variants=[v1],
+                                   interval_minutes=5, shuffle=True)
+            with open(path, encoding="utf-8") as f:
+                content_one = f.read()
+        self.assertNotIn("[Slideshow]", content)
+        self.assertNotIn("[Slideshow]", content_one)
+
+    def test_first_art_path_skips_metadata(self):
+        art = {"hero_candidates": ["a", "b"], "_rotate": {"x": 1},
+               "logo": "logo.jpg"}
+        self.assertEqual(wallpaper.first_art_path(art), "logo.jpg")
+        self.assertEqual(wallpaper.first_art_path({"hero": "h.jpg"}), "h.jpg")
+        self.assertIsNone(wallpaper.first_art_path({"hero_candidates": [1]}))
 
 
 class TestNamingPrompt(unittest.TestCase):

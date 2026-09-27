@@ -125,6 +125,34 @@ class TestArtEndpoint(ServerFixture):
     def test_missing_art_404(self):
         self.assertEqual(self.req("/api/art?key=no_such_game&role=hero"), 404)
 
+    def test_bad_candidate_index_400(self):
+        self.assertEqual(self.req("/api/art?key=x&role=hero&i=abc"), 400)
+        self.assertEqual(self.req("/api/art?key=x&role=hero&i=1%20OR%201"), 400)
+
+    def test_out_of_range_candidate_404(self):
+        self.assertEqual(
+            self.req("/api/art?key=no_such_game&role=hero&i=99"), 404)
+
+
+class TestHeroChoiceEndpoint(ServerFixture):
+    def test_bad_key_rejected(self):
+        for bad in ("../../evil", "a b", "", "a|b"):
+            self.assertEqual(self.req("/api/hero-choice", "POST",
+                                      body={"key": bad, "index": 0}), 400)
+
+    def test_bad_index_rejected(self):
+        for bad in ("nope", None, [1], {"x": 1}):
+            self.assertEqual(self.req("/api/hero-choice", "POST",
+                                      body={"key": "440", "index": bad}), 400)
+
+    def test_non_current_theme_rejected(self):
+        # a well-formed key that is not the currently-applied theme must be
+        # refused before any file is touched
+        code = self.req("/api/hero-choice", "POST",
+                        body={"key": "definitely_not_current_987654",
+                              "index": 0})
+        self.assertEqual(code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

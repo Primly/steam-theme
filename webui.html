@@ -65,6 +65,12 @@
   .card .cname { padding: 8px 10px 2px; font-size: 12.5px; }
   .card .cdetail { padding: 0 10px 4px; font-size: 11.5px; color: var(--dim); }
   .card button { margin: auto 10px 10px; }
+  .herostrip { display: flex; gap: 6px; padding: 0 10px 10px; flex-wrap: wrap; }
+  .herothumb { width: 46px; height: 30px; object-fit: cover; border-radius: 4px;
+               cursor: pointer; border: 1px solid var(--border); opacity: .7;
+               background: #0b0b0e; }
+  .herothumb:hover { opacity: 1; border-color: var(--accent); }
+  .herothumb.active { outline: 2px solid var(--accent); opacity: 1; cursor: default; }
   #ver { margin-left: auto; }
 </style>
 </head>
@@ -122,6 +128,25 @@
       <option value="muted">Muted (desaturated)</option>
     </select>
   </div>
+  <div class="sub">Hero artwork</div>
+  <div class="row">
+    <label for="heroCount">Hero candidates per game</label>
+    <input id="heroCount" type="number" min="1" max="8">
+    <span class="hint" style="margin:0">SteamGridDB heroes to fetch (1–8). Fetching is free.</span>
+  </div>
+  <div class="row">
+    <label for="heroMode">Hero selection</label>
+    <select id="heroMode" onchange="heroModeChanged()">
+      <option value="pick">Pick one — choose per game in the gallery</option>
+      <option value="rotate">Rotate — slideshow across all candidates</option>
+    </select>
+  </div>
+  <div class="row" id="heroRotateRow" style="display:none">
+    <label for="heroInterval">Rotate every (minutes)</label>
+    <input id="heroInterval" type="number" min="1" max="1440">
+    <div class="switch"><input type="checkbox" id="heroShuffle"><span>Shuffle</span></div>
+  </div>
+  <p class="hint" id="heroRotateHint" style="display:none">Rotate mode builds a wallpaper per candidate and upscales <b>every</b> candidate — Topaz credits scale with the candidate count (each is cached, so only the first rotate per game/model pays). Linux note: with shuffle off, screens rotate in lockstep; shuffle desynchronizes them.</p>
   <div class="row">
     <label for="poll">Poll interval (seconds)</label>
     <input id="poll" type="number" min="10" max="3600">
@@ -542,6 +567,12 @@ async function load() {
   setV("appearance", cfg.appearance_preference || (cfg.force_dark_mode ? "dark" : "auto"));
   setV("sysMode", cfg.system_mode || "match"); setV("appMode", cfg.app_mode || "match");
   setV("paletteMode", cfg.palette_mode || "colorful");
+  const hero = cfg.hero || {};
+  setV("heroCount", hero.count ?? 6);
+  setV("heroMode", hero.mode === "rotate" ? "rotate" : "pick");
+  setV("heroInterval", hero.interval_minutes ?? 30);
+  setC("heroShuffle", hero.shuffle);
+  heroModeChanged();
   setV("poll", cfg.poll_interval_seconds ?? 30);
   setV("excludes", (cfg.exclude_appids || []).join(", "));
   setC("nowPlaying", cfg.now_playing !== false);
@@ -585,6 +616,10 @@ async function save(apply) {
   cfg.force_dark_mode = v("appearance") === "dark";   // back-compat
   cfg.system_mode = v("sysMode"); cfg.app_mode = v("appMode");
   cfg.palette_mode = v("paletteMode");
+  cfg.hero = {count: Math.min(8, Math.max(1, parseInt(v("heroCount")) || 6)),
+              mode: v("heroMode") === "rotate" ? "rotate" : "pick",
+              interval_minutes: Math.min(1440, Math.max(1, parseInt(v("heroInterval")) || 30)),
+              shuffle: document.getElementById("heroShuffle").checked};
   cfg.poll_interval_seconds = parseInt(v("poll")) || 30;
   cfg.exclude_appids = v("excludes").split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n));
   cfg.now_playing = document.getElementById("nowPlaying").checked;
@@ -643,6 +678,25 @@ async function save(apply) {
     st.textContent += " — " + (rr.detail || "");
     setTimeout(refreshLog, 3000);
   }
+}
+
+function heroModeChanged() {
+  const rotate = v("heroMode") === "rotate";
+  document.getElementById("heroRotateRow").style.display = rotate ? "" : "none";
+  document.getElementById("heroRotateHint").style.display = rotate ? "" : "none";
+}
+
+async function pickHero(key, index, el) {
+  if (!confirm("Switch the hero image and regenerate this theme? " +
+               "If the new hero needs upscaling, one Topaz upscale may run (credits)."))
+    return;
+  el.parentElement.querySelectorAll(".herothumb")
+    .forEach(t => { t.style.pointerEvents = "none"; t.style.opacity = .4; });
+  el.style.opacity = 1;
+  const r = await api("/api/hero-choice", {key, index});
+  document.getElementById("saveState").textContent = r.detail || r.error || "";
+  setTimeout(refreshLog, 3000);
+  setTimeout(() => { loadState(); loadGallery(); }, 9000);
 }
 
 async function redo(mode) {
@@ -709,7 +763,13 @@ async function loadGallery() {
     const nm = document.createElement("div");
     nm.className = "cname"; nm.textContent = t.theme_name || t.key;
     const dt = document.createElement("div");
-    dt.className = "cdetail"; dt.textContent = `${t.appearance || "?"} · accent ${t.accent || "?"}`;
+    dt.className = "cdetail";
+    let detail = `${t.appearance || "?"} · accent ${t.accent || "?"}`;
+    if (t.hero_count > 1)
+      detail += ((cfg.hero || {}).mode === "rotate"
+                 ? ` · rotating ${t.hero_count} heroes`
+                 : ` · ${t.hero_count} heroes`);
+    dt.textContent = detail;
     const btn = document.createElement("button");
     btn.textContent = t.current ? "Current theme" : "Apply this theme";
     btn.disabled = !!t.current;
@@ -721,6 +781,23 @@ async function loadGallery() {
       setTimeout(() => { loadState(); loadGallery(); }, 6000);
     };
     card.append(nm, dt, btn);
+    // hero picker: thumbnails of every candidate on the CURRENT theme's card
+    if (t.current && t.hero_count > 1 && (cfg.hero || {}).mode !== "rotate") {
+      const strip = document.createElement("div");
+      strip.className = "herostrip";
+      strip.title = "Pick the hero image for this theme";
+      for (let i = 0; i < t.hero_count; i++) {
+        const th = document.createElement("img");
+        th.src = "/api/art?key=" + encodeURIComponent(t.key) + "&role=hero&i=" + i;
+        th.loading = "lazy";
+        th.className = "herothumb" + (i === t.hero_active ? " active" : "");
+        th.title = `Use hero #${i + 1}`;
+        th.alt = `hero candidate ${i + 1}`;
+        th.onclick = () => pickHero(t.key, i, th);
+        strip.appendChild(th);
+      }
+      card.appendChild(strip);
+    }
     g.appendChild(card);
   }
   if (!g.children.length)

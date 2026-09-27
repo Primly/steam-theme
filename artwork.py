@@ -1,15 +1,22 @@
 """Stage 2: fetch wallpaper art for a game.
 
 Fallback chain per role:
-  hero: SteamGridDB hero -> Steam CDN library_hero.jpg -> header.jpg -> wallhaven search
+  hero: SteamGridDB heroes -> Steam CDN library_hero.jpg -> wallhaven search
   logo: SteamGridDB logo -> Steam CDN logo.png -> header.jpg
   icon: SteamGridDB icon -> steamcommunity icon (hash from GetOwnedGames) -> header.jpg
+
+Heroes come in MULTIPLES (cfg hero.count, default 6): SteamGridDB usually
+has several, and the user picks one in the config UI (hero_choice.json in the
+cache folder) or rotates them as a slideshow (hero.mode = "rotate").
 
 Very small art (e.g. 64px icons) is rejected for full-screen use; the caller
 falls back to the hero in that case.
 """
 
+import glob
+import json
 import os
+import re
 import urllib.parse
 
 import requests
@@ -20,6 +27,7 @@ CDN = "https://cdn.cloudflare.steamstatic.com/steam/apps"
 
 UA = {"User-Agent": "steam-theme/1.0"}
 MIN_DIMENSION = 512  # px; anything smaller is too blurry to fill a monitor
+MAX_HERO_CANDIDATES = 8
 
 
 def _download(url, dest):
@@ -53,10 +61,10 @@ def _sgdb_get(path, key, params=None):
     return r.json()
 
 
-def _sgdb_art(appid, key, name=None):
-    """Return {hero, logo, icon} of candidate URLs from SteamGridDB (may contain None).
+def _sgdb_art(appid, key, name=None, hero_count=1):
+    """Return {"heroes": [urls], "logo": url, "icon": url} from SteamGridDB.
     Non-Steam games have no appid: resolve via the autocomplete search instead."""
-    out = {"hero": None, "logo": None, "icon": None}
+    out = {"heroes": [], "logo": None, "icon": None}
     gid = None
     if appid:
         game = _sgdb_get(f"/games/steam/{appid}", key)
@@ -67,10 +75,11 @@ def _sgdb_art(appid, key, name=None):
         gid = hits and hits[0].get("id")
     if not gid:
         return out
-    hero = _sgdb_get(f"/heroes/game/{gid}", key,
-                     {"dimensions": "3840x1240,1920x620,1600x650"})
-    if hero and hero.get("data"):
-        out["hero"] = hero["data"][0]["url"]
+    heroes = _sgdb_get(f"/heroes/game/{gid}", key,
+                       {"dimensions": "3840x1240,1920x620,1600x650"})
+    if heroes and heroes.get("data"):
+        out["heroes"] = [h["url"] for h in heroes["data"][:hero_count]
+                         if h.get("url")]
     logo = _sgdb_get(f"/logos/game/{gid}", key, {"types": "static"})
     if logo and logo.get("data"):
         out["logo"] = logo["data"][0]["url"]
@@ -96,66 +105,170 @@ def _wallhaven_hero(name, key=None):
     return None
 
 
-def fetch_artwork(appid, name, icon_url, cfg, log=print, cache_key=None):
-    """Fetch art into cache/<key>/ and return {hero, logo, icon} local paths.
+# ------------------------------------------------------------ hero helpers
 
-    Any role that fails is simply absent from the dict; callers fall back to hero.
-    appid may be None for non-Steam custom games (SGDB name search + wallhaven
-    only; the Steam CDN has no listing for them).
+def _hero_num(path):
+    m = re.fullmatch(r"hero_(\d+)\.jpg", os.path.basename(path))
+    return int(m.group(1)) if m else 0
+
+
+def hero_candidates(cache_dir):
+    """All cached hero candidates, display order: legacy hero.jpg first, then
+    hero_1.jpg, hero_2.jpg, ... (numeric sort — numbers can pass 9 as files
+    are pruned and re-fetched over time)."""
+    out = []
+    legacy = os.path.join(cache_dir, "hero.jpg")
+    if os.path.exists(legacy):
+        out.append(legacy)
+    out += sorted(glob.glob(os.path.join(cache_dir, "hero_*.jpg")),
+                  key=_hero_num)
+    return out
+
+
+def _next_hero_dest(cache_dir, taken):
+    """First free hero_N.jpg slot after the taken ones (new candidates always
+    sort after existing ones in display order)."""
+    n = max([_hero_num(p) for p in taken] + [0]) + 1
+    return os.path.join(cache_dir, f"hero_{n}.jpg")
+
+
+def hero_choice(cache_dir):
+    """The user's chosen hero index (0-based), clamped to the candidate list."""
+    try:
+        with open(os.path.join(cache_dir, "hero_choice.json"),
+                  encoding="utf-8") as f:
+            idx = int(json.load(f).get("index", 0))
+    except (OSError, ValueError):
+        idx = 0
+    n = len(hero_candidates(cache_dir))
+    return min(max(idx, 0), n - 1) if n else 0
+
+
+def active_hero(cache_dir):
+    """Path of the currently-chosen hero candidate, or None."""
+    cands = hero_candidates(cache_dir)
+    return cands[hero_choice(cache_dir)] if cands else None
+
+
+def set_hero_choice(cache_dir, index):
+    """Persist the user's hero pick; regenerate applies it."""
+    n = len(hero_candidates(cache_dir))
+    if not n:
+        raise ValueError("no hero candidates cached")
+    index = int(index)
+    if not 0 <= index < n:
+        raise ValueError(f"hero index {index} out of range (0..{n - 1})")
+    with open(os.path.join(cache_dir, "hero_choice.json"), "w",
+              encoding="utf-8") as f:
+        json.dump({"index": index}, f)
+    return index
+
+
+def fetch_artwork(appid, name, icon_url, cfg, log=print, cache_key=None):
+    """Fetch art into cache/<key>/ and return local paths:
+    {hero, logo, icon, hero_candidates}.
+
+    'hero' is the ACTIVE candidate (user's hero_choice.json pick, default the
+    first); 'hero_candidates' lists them all for the slideshow mode. Any role
+    that fails is simply absent; callers fall back to hero. appid may be None
+    for non-Steam custom games (SGDB name search + wallhaven only).
     """
     cache = os.path.join(cfg["cache_dir"], cache_key or str(appid))
     os.makedirs(cache, exist_ok=True)
     sgdb_key = cfg.get("steamgriddb_api_key") or ""
+    hero_cfg = cfg.get("hero") if isinstance(cfg.get("hero"), dict) else {}
+    try:
+        hero_count = int(hero_cfg.get("count", 6) or 6)
+    except (TypeError, ValueError):
+        hero_count = 6
+    hero_count = max(1, min(hero_count, MAX_HERO_CANDIDATES))
 
-    candidates = {"hero": [], "logo": [], "icon": []}
+    hero_urls, logo_urls, icon_urls = [], [], []
 
     if sgdb_key:
         try:
-            sgdb = _sgdb_art(appid, sgdb_key, name=name)
-            for role in candidates:
-                if sgdb.get(role):
-                    candidates[role].append(sgdb[role])
+            sgdb = _sgdb_art(appid, sgdb_key, name=name, hero_count=hero_count)
+            hero_urls += sgdb["heroes"]
+            if sgdb.get("logo"):
+                logo_urls.append(sgdb["logo"])
+            if sgdb.get("icon"):
+                icon_urls.append(sgdb["icon"])
         except Exception as e:
             log(f"  [art] SteamGridDB error: {e}")
     else:
         log("  [art] no SteamGridDB key configured, skipping (cdn.steamgriddb.com fallback)")
 
     if appid:  # Steam CDN only exists for real appids
-        candidates["hero"] += [
-            f"{CDN}/{appid}/library_hero.jpg",
-            f"{CDN}/{appid}/header.jpg",
-        ]
-        candidates["logo"] += [
-            f"{CDN}/{appid}/logo.png",
-            f"{CDN}/{appid}/header.jpg",
-        ]
+        hero_urls.append(f"{CDN}/{appid}/library_hero.jpg")
+        logo_urls += [f"{CDN}/{appid}/logo.png", f"{CDN}/{appid}/header.jpg"]
         if icon_url:
-            candidates["icon"].append(icon_url)
-        candidates["icon"].append(f"{CDN}/{appid}/header.jpg")
+            icon_urls.append(icon_url)
+        icon_urls.append(f"{CDN}/{appid}/header.jpg")
+
+    # heroes: keep cached candidates (count is authoritative — extras are
+    # pruned), drop any too small to use, then top up from sources. Keeping
+    # `heroes` identical to hero_candidates(cache) matters: hero_choice()
+    # indexes into the candidate list.
+    existing = hero_candidates(cache)
+    for p in existing[hero_count:]:
+        try:
+            os.remove(p)
+            log(f"  [art] hero count={hero_count}: dropped "
+                f"{os.path.basename(p)}")
+        except OSError:
+            pass
+    heroes = []
+    for p in existing[:hero_count]:
+        if _big_enough(p):
+            heroes.append(p)
+        else:
+            try:
+                os.remove(p)
+                log(f"  [art] {os.path.basename(p)} is too small for a "
+                    "wallpaper — deleted")
+            except OSError:
+                heroes.append(p)  # can't delete -> keep indexes aligned
+    for url in hero_urls:
+        if len(heroes) >= hero_count:
+            break
+        dest = _next_hero_dest(cache, heroes)
+        log(f"  [art] trying hero #{len(heroes) + 1}: {url}")
+        got = _download(url, dest)
+        if got and _big_enough(got):
+            heroes.append(got)
+        elif got:
+            os.remove(got)  # too small for a wallpaper; don't cache it
+    if not heroes:
+        wh = _wallhaven_hero(name, cfg.get("wallhaven_api_key") or None)
+        if wh:
+            log(f"  [art] wallhaven fallback: {wh}")
+            got = _download(wh, _next_hero_dest(cache, heroes))
+            if got:
+                heroes.append(got)
+    if len(heroes) > 1:
+        log(f"  [art] {len(heroes)} hero candidates cached")
 
     result = {}
-    for role, urls in candidates.items():
+    for role, urls in (("logo", logo_urls), ("icon", icon_urls)):
         dest = os.path.join(cache, f"{role}.jpg")
-        if os.path.exists(dest) and (_big_enough(dest) or role != "hero"):
+        if os.path.exists(dest):
             result[role] = dest
             continue
         for url in urls:
             log(f"  [art] trying {role}: {url}")
             got = _download(url, dest)
-            # heroes must be big; logos/icons may be small or transparent PNGs —
-            # the compositor gives those a centered-on-backdrop treatment
-            if got and (_big_enough(got) or role != "hero"):
+            # logos/icons may be small or transparent PNGs — the compositor
+            # gives those a centered-on-backdrop treatment
+            if got:
                 result[role] = got
                 break
         if role not in result:
             log(f"  [art] no usable {role} art from primary sources")
 
-    if "hero" not in result:
-        wh = _wallhaven_hero(name, cfg.get("wallhaven_api_key") or None)
-        if wh:
-            log(f"  [art] wallhaven fallback: {wh}")
-            got = _download(wh, os.path.join(cache, "hero.jpg"))
-            if got:
-                result["hero"] = got
-
+    if heroes:
+        idx = hero_choice(cache)
+        result["hero"] = heroes[idx]
+        result["hero_candidates"] = heroes
+        if idx:
+            log(f"  [art] hero: user-picked candidate #{idx + 1}")
     return result

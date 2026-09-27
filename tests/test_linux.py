@@ -160,6 +160,131 @@ class TestLinuxThemeManifest(unittest.TestCase):
         self.assertNotIn("\n", manifest["name"])
 
 
+class TestLinuxSlideshow(unittest.TestCase):
+    def _img(self, path, size=(64, 48), color=(10, 20, 30)):
+        from PIL import Image
+        Image.new("RGB", size, color).save(path, "JPEG")
+
+    def _monitors(self):
+        return [{"device": "HDMI-A-1", "desc": "HDMI-A-1",
+                 "rect": (0, 0, 64, 48), "primary": True, "scale": 1.0,
+                 "role": "hero"}]
+
+    def test_rotate_builds_slides_manifest_entry(self):
+        with tempfile.TemporaryDirectory() as d:
+            c1 = os.path.join(d, "hero_1.jpg")
+            c2 = os.path.join(d, "hero_2.jpg")
+            self._img(c1)
+            self._img(c2, color=(40, 10, 10))
+            art = {"hero": c1, "hero_candidates": [c1, c2],
+                   "_rotate": {"candidates": [c1, c2],
+                               "interval_minutes": 5, "shuffle": True}}
+            out = os.path.join(d, "wallpaper_x.jpg")
+            linux_theme.compose_wallpaper(self._monitors(), art, out,
+                                          lambda m: None)
+            folder = os.path.join(d, "slides", "hero")
+            self.assertEqual(sorted(os.listdir(folder)), ["00.jpg", "01.jpg"])
+            with open(os.path.join(d, "slideshow.json"), encoding="utf-8") as f:
+                ss = json.load(f)
+            self.assertEqual(ss["interval_s"], 300)
+            self.assertTrue(ss["shuffle"])
+            self.assertEqual(ss["folders"]["hero"], folder)
+            # write_theme_file merges the slideshow into the manifest
+            manifest_path = os.path.join(d, "theme.json")
+            linux_theme.write_theme_file(manifest_path, "T", out, {})
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+            self.assertEqual(manifest["slideshow"]["folders"]["hero"], folder)
+            self.assertIn("hero", manifest["wallpapers"])
+
+    def test_no_rotate_clears_stale_slideshow(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "slides", "hero"))
+            with open(os.path.join(d, "slideshow.json"), "w") as f:
+                f.write("{}")
+            c1 = os.path.join(d, "hero_1.jpg")
+            self._img(c1)
+            art = {"hero": c1, "hero_candidates": [c1]}
+            linux_theme.compose_wallpaper(self._monitors(), art,
+                                          os.path.join(d, "w.jpg"),
+                                          lambda m: None)
+            self.assertFalse(os.path.exists(os.path.join(d, "slideshow.json")))
+            self.assertFalse(os.path.exists(os.path.join(d, "slides")))
+            # and the manifest carries no slideshow
+            manifest_path = os.path.join(d, "theme.json")
+            linux_theme.write_theme_file(manifest_path, "T",
+                                         os.path.join(d, "w.jpg"), {})
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+            self.assertNotIn("slideshow", manifest)
+
+    def test_slideshow_script_contents(self):
+        s = linux_theme._slideshow_script({0: "/cache/x/slides/hero"}, 300,
+                                          False)
+        self.assertIn("org.kde.slideshow", s)
+        self.assertIn("SlidePaths", s)
+        self.assertIn("file:///cache/x/slides/hero", s)
+        self.assertIn("SlideInterval", s)
+        self.assertIn("300", s)
+        self.assertIn("'Shuffle', false", s)
+
+    def test_slideshow_script_path_cannot_break_js(self):
+        evil = '/tmp/x");malware();//'
+        s = linux_theme._slideshow_script({0: evil}, 60, True)
+        self.assertNotIn('"' + evil, s)
+        self.assertIn('\\"', s)
+        self.assertIn("'Shuffle', true", s)
+
+    def test_apply_prefers_slideshow_for_slideshow_roles(self):
+        calls = []
+
+        class R:
+            returncode = 0
+            stderr = ""
+            stdout = ""
+
+        with tempfile.TemporaryDirectory() as d:
+            slides = os.path.join(d, "slides", "hero")
+            os.makedirs(slides)
+            static = os.path.join(d, "wallpaper_logo_1.jpg")
+            with open(static, "wb") as f:
+                f.write(b"x")
+            manifest = {
+                "name": "T",
+                "wallpapers": {"logo": static},
+                "primary": static,
+                "slideshow": {"folders": {"hero": slides},
+                              "interval_s": 300, "shuffle": False},
+            }
+            theme_path = os.path.join(d, "theme.json")
+            with open(theme_path, "w", encoding="utf-8") as f:
+                json.dump(manifest, f)
+            mons = [{"device": "HDMI-A-1", "desc": "HDMI-A-1",
+                     "rect": (0, 0, 100, 100), "primary": True,
+                     "scale": 1.0},
+                    {"device": "eDP-1", "desc": "eDP-1",
+                     "rect": (0, 0, 100, 100), "primary": False,
+                     "scale": 1.0}]
+            cfg = {"monitors": [{"match": "HDMI", "role": "hero"},
+                                {"match": "eDP", "role": "logo"}]}
+            with mock.patch.object(linux_theme, "enumerate_monitors",
+                                   lambda: mons), \
+                    mock.patch.object(linux_theme, "_run",
+                                      lambda a, timeout=30:
+                                      calls.append(a) or R()):
+                linux_theme.apply_theme(theme_path, lambda m: None, cfg=cfg)
+        # one qdbus call per kind; the slideshow call must carry SlidePaths
+        self.assertEqual(len(calls), 2)
+        scripts = [c[-1] for c in calls]
+        slide = [s for s in scripts if "org.kde.slideshow" in s]
+        image = [s for s in scripts if "org.kde.image" in s]
+        self.assertEqual(len(slide), 1)
+        self.assertEqual(len(image), 1)
+        # json.dumps escapes platform path separators — compare encoded forms
+        self.assertIn(json.dumps("file://" + slides), slide[0])
+        self.assertIn(json.dumps("file://" + static), image[0])
+
+
 class TestKdeColors(unittest.TestCase):
     def test_dark_scheme_with_accent(self):
         calls = []

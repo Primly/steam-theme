@@ -13,6 +13,14 @@
 
   "palette_mode": "colorful",
   "appearance_preference": "dark",
+
+  "hero": {
+    "count": 6,
+    "mode": "pick",
+    "interval_minutes": 30,
+    "shuffle": false,
+    "_note": "count: 1-8 SteamGridDB heroes fetched per game. mode 'pick': choose one per game in the config UI gallery. mode 'rotate': slideshow across all candidates (upscales EVERY candidate — Topaz credits scale with count)."
+  },
   "force_dark_mode": true,
   "system_mode": "match",
   "app_mode": "match",
