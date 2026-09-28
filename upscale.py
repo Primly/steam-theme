@@ -77,7 +77,7 @@ def cache_path(src, cfg, role=None):
     (or editing the Comfy workflow) re-generates; old caches go unused."""
     prov = cfg.get("upscaling", {}).get("provider")
     if prov == "comfy":
-        model = _comfy_slug(cfg)
+        model = _comfy_slug(cfg, role)
     elif prov == "topaz":
         model = _model_for(cfg.get("topaz", {}), role)
     else:
@@ -122,8 +122,11 @@ def _topaz(src, dst, cfg, log, target_w, target_h, context=None, role=None,
     if generative:
         data["creativity"] = str(topaz.get("creativity", 3))
         prompt = (topaz.get("prompt") or "").strip()
-        if prompt and context:
-            prompt, dropped = fill_prompt(prompt, context)
+        if prompt:
+            ctx = dict(context or {})
+            if role:
+                ctx.setdefault("role", role)
+            prompt, dropped = fill_prompt(prompt, ctx)
             if dropped:
                 log(f"  [up] unknown prompt placeholders ignored: "
                     f"{', '.join(sorted(set(dropped)))}")
@@ -488,18 +491,31 @@ def validate_workflow(text):
     return wf, None
 
 
-def _workflow(cfg):
-    """The effective workflow (parsed): configured JSON or the default."""
-    wf, _ = validate_workflow(cfg.get("comfy", {}).get("workflow") or "")
+def _workflow_text(c, role=None):
+    """The workflow JSON text for an image role: the per-role override when
+    set (comfy.workflows.hero/logo/icon), otherwise the shared workflow,
+    otherwise empty (= built-in default)."""
+    if role:
+        w = (c.get("workflows", {}).get(role) or "").strip()
+        if w:
+            return w
+    return (c.get("workflow") or "").strip()
+
+
+def _workflow(cfg, role=None):
+    """The effective workflow (parsed) for a role: per-role override ->
+    shared workflow -> built-in default."""
+    wf, _ = validate_workflow(_workflow_text(cfg.get("comfy", {}), role))
     return wf
 
 
-def _comfy_slug(cfg):
-    """Cache slug for the comfy provider: a content hash of the effective
-    workflow, so editing the workflow re-generates (old caches go unused)."""
-    wf = _workflow(cfg)
+def _comfy_slug(cfg, role=None):
+    """Cache slug for the comfy provider: a content hash of the role's
+    effective workflow, so editing a workflow re-generates its upscales
+    (old caches go unused). Roles sharing a workflow share a slug."""
+    wf = _workflow(cfg, role)
     blob = (json.dumps(wf, sort_keys=True) if wf is not None
-            else (cfg.get("comfy", {}).get("workflow") or ""))
+            else _workflow_text(cfg.get("comfy", {}), role))
     return "comfy-" + hashlib.sha1(blob.encode("utf-8")).hexdigest()[:8]
 
 
@@ -592,10 +608,16 @@ def drain_comfy_queue(cfg, log=print):
     log(f"  [up] comfy queue: processing {len(q)} deferred upscale(s)")
     done_keys, remaining = [], []
     for job in q:
+        # the CURRENT config decides the cache slot: if the workflow was
+        # edited since enqueue, the job lands under the new slug
+        role = job.get("role")
+        dst = cache_path(str(job["src"]), cfg, role)
+        if os.path.exists(dst):
+            continue  # already upscaled since enqueue; just drop the job
         try:
-            out = _comfy(job["src"], job["dst"], cfg, log,
+            out = _comfy(str(job["src"]), dst, cfg, log,
                          job.get("w") or 0, job.get("h") or 0,
-                         context=job.get("context"), defer=False)
+                         context=job.get("context"), defer=False, role=role)
         except Exception as e:
             log(f"  [up] comfy queue job error: {e}")
             out = None
@@ -617,23 +639,24 @@ def drain_comfy_queue(cfg, log=print):
     return [k for k in done_keys if k]
 
 
-def _comfy(src, dst, cfg, log, target_w, target_h, context=None, defer=True):
+def _comfy(src, dst, cfg, log, target_w, target_h, context=None,
+           defer=True, role=None):
     """Upscale via a local ComfyUI instance: upload the image, submit the
-    Export-API workflow (placeholders filled), poll history, download the
-    result. With defer_while_gaming on and a game running, the job is queued
-    instead and drained when the game exits. Never raises."""
+    role's Export-API workflow (placeholders filled), poll history, download
+    the result. With defer_while_gaming on and a game running, the job is
+    queued instead and drained when the game exits. Never raises."""
     c = cfg.get("comfy", {})
     if defer and c.get("defer_while_gaming", True) and _game_running(cfg):
         job = {"src": src, "dst": dst, "w": target_w, "h": target_h,
                "cache_key": os.path.basename(os.path.dirname(src)),
-               "context": context or {}}
+               "context": context or {}, "role": role}
         if enqueue_comfy(cfg, job):
             log(f"  [up] game is running — deferred {os.path.basename(src)} "
                 "to the ComfyUI queue (runs when you stop playing)")
         return None
-    wf, err = validate_workflow(c.get("workflow") or "")
+    wf, err = validate_workflow(_workflow_text(c, role))
     if err:
-        log(f"  [up] comfy workflow problem: {err}")
+        log(f"  [up] comfy {role + ' ' if role else ''}workflow problem: {err}")
         return None
     try:
         base = _comfy_base(cfg)
@@ -669,7 +692,10 @@ def _comfy(src, dst, cfg, log, target_w, target_h, context=None, defer=True):
             elif ct in ("SaveImage", "Save Image"):
                 node.setdefault("inputs", {})["filename_prefix"] = \
                     f"steamtheme_{token}"
-        wf, dropped = fill_workflow(wf, context or {})
+        ctx = dict(context or {})
+        if role:
+            ctx.setdefault("role", role)
+        wf, dropped = fill_workflow(wf, ctx)
         if dropped:
             log(f"  [up] unknown workflow placeholders ignored: "
                 f"{', '.join(sorted(set(dropped)))}")
@@ -752,7 +778,7 @@ def maybe_upscale(path, target_w, target_h, cfg, log=print, context=None,
     # cache key includes the effective model, so switching models regenerates
     prov = up.get("provider")
     model = (_model_for(cfg.get("topaz", {}), role) if prov == "topaz"
-             else _comfy_slug(cfg) if prov == "comfy" else "ai")
+             else _comfy_slug(cfg, role) if prov == "comfy" else "ai")
     dst = cache_path(path, cfg, role)
     if os.path.exists(dst):
         return dst  # one upscale per source+model; never re-spend credits
@@ -761,7 +787,8 @@ def maybe_upscale(path, target_w, target_h, cfg, log=print, context=None,
     if prov == "topaz":
         out = _topaz(path, dst, cfg, log, target_w, target_h, context, role)
     elif prov == "comfy":
-        out = _comfy(path, dst, cfg, log, target_w, target_h, context)
+        out = _comfy(path, dst, cfg, log, target_w, target_h, context,
+                     role=role)
     else:
         out = _ai(path, dst, cfg, log)
     if out:

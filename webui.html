@@ -310,11 +310,11 @@
     <label for="topazPrompt" class="top">Prompt (generative)</label>
     <textarea id="topazPrompt" placeholder="{game} key art, {mood} atmosphere — empty = Topaz autoprompt"></textarea>
   </div>
-  <p class="hint">Placeholders filled per game: <code>{game}</code>, plus the VLM's JSON
-    values <code>{mood}</code>, <code>{theme_name}</code>, <code>{appearance}</code>,
-    <code>{palette_mode}</code> — and any extra keys you add to the naming prompt's
-    JSON shape (a <code>"genre"</code> key becomes <code>{genre}</code> here).
-    Unknown placeholders are ignored (and logged).</p>
+  <p class="hint">Placeholders filled per game: <code>{game}</code>, <code>{role}</code>
+    (hero/logo/icon), plus the VLM's JSON values <code>{mood}</code>, <code>{theme_name}</code>,
+    <code>{appearance}</code>, <code>{palette_mode}</code> — and any extra keys you add
+    to the naming prompt's JSON shape (a <code>"genre"</code> key becomes <code>{genre}</code>
+    here). Unknown placeholders are ignored (and logged).</p>
   <div class="sub">Per-role overrides</div>
   <p class="hint">e.g. Bloom 2 for heroes, Text Refine for logos/icons. Switching a model re-generates that role's upscale (cached per model).</p>
   <div class="row"><label for="mHero">Hero</label><select id="mHero"></select></div>
@@ -332,7 +332,7 @@
     <input id="comfyHost" placeholder="127.0.0.1">
     <label for="comfyPort" style="min-width:0">port</label>
     <input id="comfyPort" type="number" min="1" max="65535" placeholder="8188" style="width:90px">
-    <button onclick="runTest('comfy', {host: v('comfyHost'), port: v('comfyPort'), workflow: v('comfyWorkflow')}, 'comfyResult')">Test</button>
+    <button onclick="runTest('comfy', {host: v('comfyHost'), port: v('comfyPort'), workflow: v('comfyWorkflow'), workflows: {hero: v('comfyWfHero'), logo: v('comfyWfLogo'), icon: v('comfyWfIcon')}}, 'comfyResult')">Test</button>
     <div class="result" id="comfyResult"></div>
   </div>
   <div class="row">
@@ -343,10 +343,27 @@
     <button onclick="setV('comfyWorkflow', COMFY_DEFAULT_WORKFLOW)">Reset to default workflow</button>
   </div>
   <p class="hint">Placeholders are filled into every string in the workflow (e.g. the positive
-    prompt node): <code>{game}</code>, <code>{mood}</code>, <code>{theme_name}</code>,
-    <code>{appearance}</code>, <code>{palette_mode}</code>, plus any extra keys from your
-    naming prompt's JSON shape. The LoadImage and SaveImage nodes are wired automatically
-    per image.</p>
+    prompt node): <code>{game}</code>, <code>{role}</code> (hero/logo/icon), <code>{mood}</code>,
+    <code>{theme_name}</code>, <code>{appearance}</code>, <code>{palette_mode}</code>, plus any
+    extra keys from your naming prompt's JSON shape. The LoadImage and SaveImage nodes
+    are wired automatically per image.</p>
+  <div class="sub">Per-role workflow overrides</div>
+  <p class="hint">Optional — paste a different Export API workflow for an image type.
+    Empty = that type uses the main workflow above. e.g. a text-preserving workflow for
+    logos, or a low-denoise one for icons. Each override gets its own upscale cache, so
+    editing one role only re-generates that role.</p>
+  <div class="row">
+    <label for="comfyWfHero" class="top">Hero workflow</label>
+    <textarea id="comfyWfHero" rows="4" spellcheck="false" placeholder="empty = main workflow"></textarea>
+  </div>
+  <div class="row">
+    <label for="comfyWfLogo" class="top">Logo workflow</label>
+    <textarea id="comfyWfLogo" rows="4" spellcheck="false" placeholder="empty = main workflow"></textarea>
+  </div>
+  <div class="row">
+    <label for="comfyWfIcon" class="top">Icon workflow</label>
+    <textarea id="comfyWfIcon" rows="4" spellcheck="false" placeholder="empty = main workflow"></textarea>
+  </div>
   <div class="row">
     <div class="switch"><input type="checkbox" id="comfyDefer"><span>While a game is running, queue upscales and run them when you stop playing</span></div>
   </div>
@@ -680,6 +697,9 @@ async function load() {
   COMFY_DEFAULT_WORKFLOW = (await api("/api/comfy-default-workflow")).workflow || "";
   setV("comfyHost", cm.host || "127.0.0.1"); setV("comfyPort", cm.port ?? 8188);
   setV("comfyWorkflow", cm.workflow || COMFY_DEFAULT_WORKFLOW);
+  const cwfs = cm.workflows || {};
+  setV("comfyWfHero", cwfs.hero || ""); setV("comfyWfLogo", cwfs.logo || "");
+  setV("comfyWfIcon", cwfs.icon || "");
   setC("comfyDefer", cm.defer_while_gaming !== false);
   setV("comfyTimeout", cm.timeout_seconds ?? 900);
   providerChanged();
@@ -747,6 +767,14 @@ async function save(apply) {
                defer_while_gaming: document.getElementById("comfyDefer").checked,
                timeout_seconds: Math.min(7200, Math.max(60, parseInt(v("comfyTimeout")) || 900))};
   if (cw && cw !== COMFY_DEFAULT_WORKFLOW) cfg.comfy.workflow = cw;  // default/empty = built-in
+  else delete cfg.comfy.workflow;  // Reset/clear must actually persist
+  const cwOver = {};
+  for (const r of ["hero", "logo", "icon"]) {
+    const w = v("comfyWf" + r[0].toUpperCase() + r.slice(1)).trim();
+    if (w) cwOver[r] = w;
+  }
+  if (Object.keys(cwOver).length) cfg.comfy.workflows = cwOver;
+  else delete cfg.comfy.workflows;  // clearing all overrides must persist
   if (PLATFORM === "win32") {
     cfg.windows_terminal = {enabled: document.getElementById("wtEnabled").checked,
       set_background_image: document.getElementById("wtBg").checked,

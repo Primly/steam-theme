@@ -274,6 +274,39 @@ class TestComfyEndpoint(ServerFixture):
         self.assertFalse(data["ok"])
         self.assertIn("workflow", data["error"])
 
+    def test_per_role_workflow_validated_and_named_in_error(self):
+        with mock.patch.object(webui.requests, "get") as g:
+            r = mock.Mock(status_code=200)
+            r.json = lambda: {"devices": []}
+            g.return_value = r
+            data = self._post({"host": "127.0.0.1", "port": 8188,
+                               "workflow": "",
+                               "workflows": {"hero": "{bad json"}})
+        self.assertFalse(data["ok"])
+        self.assertIn("hero workflow", data["error"])
+
+    def test_per_role_missing_nodes_named_in_error(self):
+        with mock.patch.object(webui.requests, "get") as g:
+            r = mock.Mock(status_code=200)
+            r.json = lambda: {"devices": []}
+            g.return_value = r
+            data = self._post({"host": "127.0.0.1", "port": 8188,
+                               "workflow": "",
+                               "workflows": {
+                                   "logo": '{"1": {"class_type": "KSampler"}}'}})
+        self.assertFalse(data["ok"])
+        self.assertIn("logo workflow", data["error"])
+
+    def test_empty_per_role_overrides_are_skipped(self):
+        with mock.patch.object(webui.requests, "get") as g:
+            r = mock.Mock(status_code=200)
+            r.json = lambda: {"devices": []}
+            g.return_value = r
+            data = self._post({"host": "127.0.0.1", "port": 8188,
+                               "workflow": "",
+                               "workflows": {"hero": "", "logo": "  "}})
+        self.assertTrue(data["ok"], data)
+
     def test_default_workflow_served_over_http(self):
         r = urllib.request.Request(
             f"http://127.0.0.1:{self.port}/api/comfy-default-workflow")

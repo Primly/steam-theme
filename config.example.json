@@ -48,6 +48,7 @@
     "host": "127.0.0.1",
     "port": 8188,
     "workflow": "",
+    "workflows": {"hero": "", "logo": "", "icon": ""},
     "defer_while_gaming": true,
     "timeout_seconds": 900
   },

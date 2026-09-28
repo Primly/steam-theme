@@ -1188,6 +1188,164 @@ class TestComfySubmit(unittest.TestCase):
                                5120, 1440, context={}))
 
 
+class TestComfyPerRole(unittest.TestCase):
+    """Per-role workflow overrides (comfy.workflows.hero/logo/icon): a role
+    with an override uses its own workflow and its own cache slot; roles
+    without one fall back to the shared workflow. {role} is a placeholder."""
+
+    def setUp(self):
+        import io
+        from PIL import Image
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(
+            self.dir, ignore_errors=True))
+        os.makedirs(os.path.join(self.dir, "440"))
+        self.src = os.path.join(self.dir, "440", "hero_1.jpg")
+        Image.new("RGB", (32, 32), (10, 20, 30)).save(self.src, "JPEG")
+        buf = io.BytesIO()
+        Image.new("RGB", (64, 64), (1, 2, 3)).save(buf, "PNG")
+        self.png_bytes = buf.getvalue()
+        self.shared = json.dumps({
+            "1": {"class_type": "LoadImage", "inputs": {"image": "x.jpg"}},
+            "5": {"class_type": "CLIPTextEncode",
+                  "inputs": {"text": "SHARED {game} ({role})"}},
+            "9": {"class_type": "SaveImage", "inputs": {}}})
+        self.hero_wf = json.dumps({
+            "1": {"class_type": "LoadImage", "inputs": {"image": "x.jpg"}},
+            "5": {"class_type": "CLIPTextEncode",
+                  "inputs": {"text": "HERO-MARKER {role}"}},
+            "9": {"class_type": "SaveImage", "inputs": {}}})
+        self.cfg = {"cache_dir": self.dir,
+                    "upscaling": {"enabled": True, "provider": "comfy"},
+                    "comfy": {"host": "127.0.0.1", "port": 8188,
+                              "workflow": self.shared,
+                              "workflows": {"hero": self.hero_wf},
+                              "defer_while_gaming": False}}
+        self.submitted = None
+
+    def _resp(self, payload=None, content=b""):
+        r = mock.Mock()
+        r.status_code = 200
+        r.text = payload if isinstance(payload, str) else ""
+        r.json = lambda: payload if isinstance(payload, dict) else {}
+        r.content = content
+        return r
+
+    def _mock_server(self):
+        import requests as real_requests
+        cm = mock.patch.object(upscale, "requests")
+        rq = cm.start()
+        self.addCleanup(cm.stop)
+        sl = mock.patch.object(upscale.time, "sleep")
+        sl.start()
+        self.addCleanup(sl.stop)
+        rq.RequestException = real_requests.RequestException
+
+        def post(url, **kw):
+            if url.endswith("/upload/image"):
+                return self._resp({"name": "u_abc.jpg"})
+            if url.endswith("/prompt"):
+                self.submitted = kw["json"]["prompt"]
+                return self._resp({"prompt_id": "p1"})
+            raise AssertionError(url)
+
+        def get(url, **kw):
+            if "/history/" in url:
+                return self._resp({"p1": {
+                    "status": {"completed": True, "status_str": "success"},
+                    "outputs": {"9": {"images": [
+                        {"filename": "o.png", "subfolder": "",
+                         "type": "output"}]}}}})
+            if url.endswith("/view"):
+                return self._resp(content=self.png_bytes)
+            raise AssertionError(url)
+
+        rq.post.side_effect = post
+        rq.get.side_effect = get
+
+    def test_slug_shared_when_no_overrides(self):
+        del self.cfg["comfy"]["workflows"]
+        slugs = {upscale._comfy_slug(self.cfg, r)
+                 for r in ("hero", "logo", "icon", None)}
+        self.assertEqual(len(slugs), 1)
+
+    def test_slug_differs_only_for_the_overridden_role(self):
+        hero = upscale._comfy_slug(self.cfg, "hero")
+        logo = upscale._comfy_slug(self.cfg, "logo")
+        icon = upscale._comfy_slug(self.cfg, "icon")
+        self.assertNotEqual(hero, logo)
+        self.assertEqual(logo, icon)
+        # and the cache path carries the role's slug
+        self.assertIn(hero, upscale.cache_path(self.src, self.cfg, "hero"))
+        self.assertIn(logo, upscale.cache_path(self.src, self.cfg, "logo"))
+
+    def test_per_role_workflow_submitted_with_role_placeholder(self):
+        self._mock_server()
+        dst = upscale.cache_path(self.src, self.cfg, "hero")
+        out = upscale._comfy(self.src, dst, self.cfg, lambda m: None,
+                             5120, 1440, context={"game": "Hades II"},
+                             role="hero")
+        self.assertEqual(out, dst)
+        self.assertEqual(self.submitted["5"]["inputs"]["text"],
+                         "HERO-MARKER hero")
+        # a role without an override gets the shared workflow, {role} filled
+        dst2 = upscale.cache_path(self.src, self.cfg, "logo")
+        out2 = upscale._comfy(self.src, dst2, self.cfg, lambda m: None,
+                              5120, 1440, context={"game": "Hades II"},
+                              role="logo")
+        self.assertEqual(out2, dst2)
+        self.assertEqual(self.submitted["5"]["inputs"]["text"],
+                         "SHARED Hades II (logo)")
+
+    def test_drain_recomputes_dst_after_workflow_edit(self):
+        self.cfg["comfy"]["defer_while_gaming"] = True
+        with mock.patch.object(upscale, "_game_running", return_value=True):
+            upscale.maybe_upscale(self.src, 5120, 1440, self.cfg,
+                                  lambda m: None, context={}, role="hero")
+        old_dst = upscale.cache_path(self.src, self.cfg, "hero")
+        # user edits the hero workflow while the job sits in the queue
+        self.cfg["comfy"]["workflows"]["hero"] = self.hero_wf.replace(
+            "HERO-MARKER", "HERO-V2")
+        new_dst = upscale.cache_path(self.src, self.cfg, "hero")
+        self.assertNotEqual(old_dst, new_dst)
+
+        def fake_comfy(src, dst, cfg, log, w, h, context=None, defer=True,
+                       role=None):
+            with open(dst, "wb") as f:
+                f.write(b"done")
+            return dst
+
+        with mock.patch.object(upscale, "_game_running", return_value=False), \
+                mock.patch.object(upscale, "_comfy", fake_comfy), \
+                mock.patch.object(upscale, "requests") as rq:
+            rq.get.return_value = mock.Mock(status_code=200)
+            done = upscale.drain_comfy_queue(self.cfg, lambda m: None)
+        self.assertEqual(done, ["440"])
+        self.assertTrue(os.path.exists(new_dst))   # landed under the NEW slug
+        self.assertFalse(os.path.exists(old_dst))
+
+    def test_drain_drops_job_whose_cache_slot_is_already_filled(self):
+        self.cfg["comfy"]["defer_while_gaming"] = True
+        with mock.patch.object(upscale, "_game_running", return_value=True):
+            upscale.maybe_upscale(self.src, 5120, 1440, self.cfg,
+                                  lambda m: None, context={}, role="hero")
+        # the upscale arrives through some other path before the drain runs
+        dst = upscale.cache_path(self.src, self.cfg, "hero")
+        with open(dst, "wb") as f:
+            f.write(b"already")
+        calls = []
+        with mock.patch.object(upscale, "_game_running", return_value=False), \
+                mock.patch.object(upscale, "_comfy",
+                                  lambda *a, **k: calls.append(1)), \
+                mock.patch.object(upscale, "requests") as rq:
+            rq.get.return_value = mock.Mock(status_code=200)
+            done = upscale.drain_comfy_queue(self.cfg, lambda m: None)
+        self.assertEqual(done, [])     # nothing NEW produced -> no re-theme
+        self.assertEqual(calls, [])     # no GPU work submitted
+        with open(upscale._queue_file(self.cfg), encoding="utf-8") as f:
+            self.assertEqual(json.load(f), [])  # job dropped, not retried
+
+
 class TestComfyDefer(unittest.TestCase):
     """defer_while_gaming: upscales queue while a game runs, drain when idle,
     dedupe repeat enqueues, drop poison jobs after 3 attempts."""
@@ -1231,7 +1389,8 @@ class TestComfyDefer(unittest.TestCase):
             upscale.maybe_upscale(self.src, 5120, 1440, self.cfg,
                                   lambda m: None, context={}, role="hero")
 
-        def fake_comfy(src, dst, cfg, log, w, h, context=None, defer=True):
+        def fake_comfy(src, dst, cfg, log, w, h, context=None, defer=True,
+                       role=None):
             with open(dst, "wb") as f:
                 f.write(b"done")
             return dst

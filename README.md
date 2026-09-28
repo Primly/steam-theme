@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.7.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.8.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -277,7 +277,7 @@ the hero, so wordmarks stay crisp instead of being zoomed and cropped.
 | **Steam** | API key, auto-detected SteamID64, live test |
 | **Artwork sources** | SteamGridDB / wallhaven keys, live test |
 | **AI / VLM** | OpenAI-compatible endpoint, presets, model dropdown, live test |
-| **Upscaling** | provider (Topaz / AI images / ComfyUI), Topaz key + model picker (Precision/Generative), per-role models, creativity, prompt; ComfyUI host/port, Export-API workflow JSON, defer-while-gaming |
+| **Upscaling** | provider (Topaz / AI images / ComfyUI), Topaz key + model picker (Precision/Generative), per-role models, creativity, prompt; ComfyUI host/port, Export-API workflow JSON + per-role workflow overrides, defer-while-gaming |
 | **Extras** | Windows Terminal (Windows) / Konsole (Linux), SignalRGB (Windows) / OpenRGB (Linux) |
 | **Monitors** | detected displays → role mapping |
 | **Ultimate Fetch** | pre-cache artwork for the whole Steam library, with progress + cancel; optional Topaz upscaling with a credit estimate |
@@ -416,8 +416,9 @@ spending any):
 - **Generative models** (`Bloom 2`, `Wonder 3`, `Redefine`, `Bloom
   Realism`, `Recovery V2`, `Standard MAX`) — creative re-interpretation,
   ~1 credit per 2 MP. Steerable with a **creativity** slider and a prompt
-  template whose placeholders are filled per game: `{game}`, plus the VLM's
-  JSON values `{mood}`, `{theme_name}`, `{appearance}`, `{palette_mode}`.
+  template whose placeholders are filled per game: `{game}`, `{role}`
+  (hero/logo/icon), plus the VLM's JSON values `{mood}`, `{theme_name}`,
+  `{appearance}`, `{palette_mode}`.
   Any extra keys you add to the AI naming prompt's JSON shape become
   placeholders too (a `"genre"` key becomes `{genre}`). Unknown
   placeholders are ignored, never an error.
@@ -446,10 +447,15 @@ install:
 Details:
 
 - **Placeholders work inside the workflow JSON.** Any string value may use
-  `{game}`, `{mood}`, `{theme_name}`, `{appearance}`, `{palette_mode}`
-  (plus custom keys from your AI naming prompt) — they're filled in per
-  game after the JSON is parsed, so VLM text can never corrupt the
-  workflow. Unknown placeholders are dropped and logged.
+  `{game}`, `{role}` (hero/logo/icon), `{mood}`, `{theme_name}`,
+  `{appearance}`, `{palette_mode}` (plus custom keys from your AI naming
+  prompt) — they're filled in per game after the JSON is parsed, so VLM
+  text can never corrupt the workflow. Unknown placeholders are dropped and
+  logged.
+- **Per-role workflow overrides**: paste a different Export-API workflow
+  for heroes, logos, or icons (e.g. a text-preserving workflow for logos).
+  Empty = the role uses the main workflow. Each override has its own upscale
+  cache, so editing one role only re-generates that role.
 - The `LoadImage` input and `SaveImage` filename prefix are wired
   automatically per job; everything else in the workflow is yours to tweak.
 - **Defer while gaming** (on by default): while a game is running, upscale
@@ -618,7 +624,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 160 tests
+python -m unittest discover -s tests -v   # 168 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -655,6 +661,15 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.8.0** — **per-role ComfyUI workflows**: optional Export-API JSON
+  overrides for hero / logo / icon (empty = the role uses the main
+  workflow), each with its own upscale cache slot so editing one role only
+  re-generates that role. New `{role}` placeholder for workflow strings and
+  Topaz generative prompts. Deferred queue jobs re-resolve their cache slot
+  against the *current* workflow at drain time, and jobs whose upscale
+  already exists are dropped instead of re-run. Fix: the UI's *Reset to
+  default workflow* / clearing an override now actually persists (the stale
+  value survived a save before).
 - **1.7.0** — **ComfyUI upscaling provider**: upscale artwork on your own
   GPU with any local ComfyUI workflow (paste the Export-API JSON; the
   built-in default is Ultimate SD Upscale). VLM placeholders

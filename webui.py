@@ -202,6 +202,17 @@ def test_comfy(body):
     if werr:
         return {"ok": False, "error":
                 f"connected ({gpu or 'ComfyUI up'}) but workflow: {werr}"}
+    overrides = body.get("workflows")
+    if isinstance(overrides, dict):
+        for role in ("hero", "logo", "icon"):
+            rw = str(overrides.get(role) or "").strip()
+            if not rw:
+                continue
+            _, rerr = _up.validate_workflow(rw)
+            if rerr:
+                return {"ok": False, "error":
+                        f"connected ({gpu or 'ComfyUI up'}) but {role} "
+                        f"workflow: {rerr}"}
     return {"ok": True, "latency_ms": ms,
             "detail": f"connected — {gpu or 'ComfyUI is up'}; workflow OK "
                       "(LoadImage + SaveImage found)"}
