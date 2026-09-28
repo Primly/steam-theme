@@ -17,8 +17,10 @@ API:
   GET  /api/art?key&role&i      cached art; role=hero&i=N serves candidate N
   POST /api/hero-choice         {key, index} pick a hero candidate + regenerate
   POST /api/fetch-all           Ultimate Fetch: cache art for the whole library
+                                ({"upscale": true} also upscales — Topaz credits)
   GET  /api/fetch-all-status    Ultimate Fetch progress
   POST /api/fetch-all-cancel    cancel a running Ultimate Fetch
+  GET  /api/fetch-all-upscale-estimate   images an upscale pass would submit
 """
 
 import json
@@ -166,7 +168,8 @@ TESTS = {"steam": test_steam, "sgdb": test_sgdb, "ai": test_ai, "topaz": test_to
 # Ultimate Fetch progress (single worker at a time; written by its thread,
 # read by the status endpoint — plain dict swaps are GIL-atomic enough here)
 FETCH_ALL = {"running": False, "done": 0, "total": 0, "current": "",
-             "cancel_requested": False, "stats": None, "error": None}
+             "cancel_requested": False, "stats": None, "error": None,
+             "upscale": False}
 
 
 def _gallery():
@@ -323,6 +326,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"ok": True, "themes": _gallery()})
         elif path == "/api/fetch-all-status":
             self._send(200, dict(FETCH_ALL))
+        elif path == "/api/fetch-all-upscale-estimate":
+            import main as app
+            try:
+                est = app.upscale_pending_estimate(app.load_config(),
+                                                   lambda m: None)
+                self._send(200, {"ok": True, **est})
+            except Exception as e:
+                self._send(500, {"ok": False, "error": str(e)})
         elif path == "/api/art":
             import artwork
             import main as app
@@ -479,16 +490,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(409, {"ok": False,
                                  "error": "Ultimate Fetch is already running"})
                 return
+            import main as app
+            cfg = app.load_config()
+            with_up = bool(body.get("upscale"))
+            if with_up and not cfg.get("upscaling", {}).get("enabled"):
+                self._send(400, {"ok": False,
+                                 "error": "upscaling is disabled — enable and "
+                                          "configure it in the Upscaling "
+                                          "section first"})
+                return
             FETCH_ALL.update(running=True, done=0, total=0, current="",
-                             cancel_requested=False, stats=None, error=None)
+                             cancel_requested=False, stats=None, error=None,
+                             upscale=with_up)
 
             def work():
-                import main as app
-                cfg = app.load_config()
                 log = app._log_factory(cfg)
                 try:
                     stats = app.fetch_library(
-                        cfg, log,
+                        cfg, log, with_upscale=with_up,
                         should_cancel=lambda: FETCH_ALL["cancel_requested"],
                         progress=lambda i, total, name: FETCH_ALL.update(
                             done=i, total=total, current=name))
@@ -501,8 +520,11 @@ class Handler(BaseHTTPRequestHandler):
                     FETCH_ALL["current"] = ""
             threading.Thread(target=work, daemon=True).start()
             self._send(200, {"ok": True,
-                             "detail": "Ultimate Fetch started — watch the "
-                                      "progress bar or the activity log"})
+                             "detail": "Ultimate Fetch started" +
+                                      (" (with upscaling — spending Topaz "
+                                       "credits)" if with_up else "") +
+                                      " — watch the progress bar or the "
+                                      "activity log"})
         elif path == "/api/fetch-all-cancel":
             if not FETCH_ALL["running"]:
                 self._send(200, {"ok": False, "error": "nothing is running"})

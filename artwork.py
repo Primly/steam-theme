@@ -236,6 +236,25 @@ def set_hero_choice(cache_dir, index):
     return index
 
 
+def art_from_cache(cache_dir):
+    """Rebuild an {hero, hero_candidates, logo, icon} dict from an existing
+    cache folder — no network. Used by passes over already-fetched games
+    (e.g. Ultimate Fetch's upscale option). Returns None when the folder has
+    no usable art at all."""
+    art = {}
+    cands = hero_candidates(cache_dir)
+    if cands:
+        art["hero_candidates"] = cands
+        art["hero"] = active_hero(cache_dir) or cands[0]
+    for role in ("logo", "icon"):
+        for ext in (".png", ".jpg"):
+            p = os.path.join(cache_dir, role + ext)
+            if os.path.exists(p):
+                art[role] = p
+                break
+    return art or None
+
+
 def fetch_artwork(appid, name, icon_url, cfg, log=print, cache_key=None):
     """Fetch art into cache/<key>/ and return local paths:
     {hero, logo, icon, hero_candidates}.

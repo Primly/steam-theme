@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.5.3-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.6.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -280,7 +280,7 @@ the hero, so wordmarks stay crisp instead of being zoomed and cropped.
 | **Upscaling** | Topaz key, model picker (Precision/Generative), per-role models, creativity, prompt |
 | **Extras** | Windows Terminal (Windows) / Konsole (Linux), SignalRGB (Windows) / OpenRGB (Linux) |
 | **Monitors** | detected displays → role mapping |
-| **Ultimate Fetch** | pre-cache artwork for the whole Steam library, with progress + cancel |
+| **Ultimate Fetch** | pre-cache artwork for the whole Steam library, with progress + cancel; optional Topaz upscaling with a credit estimate |
 | **Theme gallery** | thumbnails of every cached theme; re-apply instantly |
 | **Activity log** | live tail of what the service is doing |
 
@@ -367,14 +367,25 @@ What to expect:
 - **It takes a while** — a few seconds per game (a 500-game library can take
   the better part of an hour) and a few hundred MB of disk, growing with
   `hero.count`. The UI shows a live progress bar and the log lists every game.
-- **Free and safe** — artwork downloads only. It never upscales (no Topaz
-  credits), never names themes (no VLM calls), and never touches your desktop.
+- **Free and safe by default** — artwork downloads only: no Topaz credits,
+  no VLM calls, and it never touches your desktop.
+- **Optional upscaling** — tick *Also upscale fetched art* (or
+  `--fetch-all --upscale`) and each game also gets the same upscale pass a
+  theme application would do: pick mode upscales the active hero + logo +
+  icon, rotate mode upscales **every** hero candidate. This **spends Topaz
+  credits** — ticking the checkbox shows a live estimate of how many cached
+  images are pending, and the confirm dialog warns you again. If AI naming
+  is enabled the VLM runs per game too, so generative prompt placeholders
+  (`{mood}` and friends) are filled properly. Results are cached per model,
+  so it only ever pays for new work.
 - **Resumable** — games whose cache is already complete are skipped without
-  any network calls, so cancelling and re-running picks up where it left off.
-  Excluded app IDs are skipped too.
+  any network calls, and upscales that already exist are never re-billed, so
+  cancelling and re-running picks up where it left off. Excluded app IDs are
+  skipped too.
 
-Upscaling still happens the first time each game is actually themed — that's
-when it's clear which hero you want and whether the art needs it.
+Anything Ultimate Fetch already upscaled is reused at theme time (the
+per-model cache is shared), so pre-fetched games theme instantly with zero
+extra credits.
 
 ## 🎨 AI / VLM theme naming
 
@@ -531,6 +542,7 @@ python main.py --once --force # re-theme even if unchanged (uses cache)
 python main.py --once --dry-run  # full pipeline, changes nothing
 python main.py --appid 440    # theme a specific game by appid
 python main.py --fetch-all    # Ultimate Fetch: cache art for the whole library
+python main.py --fetch-all --upscale   # ...and upscale it (spends Topaz credits)
 python main.py --reapply      # re-apply the current cached theme
 python main.py --ui           # browser config page
 python main.py --ui --port 8800
@@ -574,7 +586,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 122 tests
+python -m unittest discover -s tests -v   # 135 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -611,6 +623,12 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.6.0** — **Ultimate Fetch can upscale**: opt-in checkbox (or
+  `--fetch-all --upscale`) runs the same credit-safe upscale pass a theme
+  application does, per game — with a pre-flight estimate of pending images
+  (no credits spent estimating), VLM-filled prompt placeholders when AI
+  naming is on, and resume that never re-bills cached upscales. The theme
+  pipeline's upscale logic was extracted into a shared helper both paths use.
 - **1.5.3** — fix: a manual theme hold no longer dies after a redo button
   (Regenerate / Full refetch). The forced rerun deliberately ignores the
   detected game, but the post-run cleanup cleared the hold anyway, so the

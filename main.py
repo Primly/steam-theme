@@ -35,7 +35,7 @@ else:
     import linux_theme as theme_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-__version__ = "1.5.3"
+__version__ = "1.6.0"
 
 
 def safe_join(base, *parts):
@@ -156,6 +156,58 @@ def _upscale_context(name, pal, ai, cfg):
     return ctx
 
 
+def upscale_toward_monitors(cfg, art, monitors, name, log, up_ctx):
+    """The upscale pass shared by theme runs and Ultimate Fetch: rotate mode
+    upscales ALL hero candidates toward the hero monitor, pick mode only the
+    active one; logo/icon upscale toward their centered fit boxes. Mutates
+    art paths to their upscaled versions. Credit-safe — maybe_upscale no-ops
+    on cached results or already-big-enough sources. Returns the number of
+    NEW upscale jobs submitted (0 when upscaling is disabled).
+    """
+    submitted = 0
+
+    def up(path, w, h, role):
+        nonlocal submitted
+        dst = upscale.cache_path(path, cfg, role)
+        had_cache = os.path.exists(dst)
+        out = upscale.maybe_upscale(path, w, h, cfg, log, context=up_ctx,
+                                    role=role)
+        if out == dst and out != path and not had_cache:
+            submitted += 1
+        return out
+
+    hero_set = _hero_settings(cfg)
+    candidates = [c for c in (art.get("hero_candidates") or [])
+                  if isinstance(c, str)]
+    if hero_set["mode"] == "rotate" and len(candidates) > 1:
+        # every candidate becomes a wallpaper variant, so upscale them ALL
+        # toward the hero monitor (cached per candidate+model: only the first
+        # rotate run per game/model spends Topaz credits)
+        hero_mon = next((m for m in monitors if m["role"] == "hero"), None)
+        if hero_mon:
+            if cfg.get("upscaling", {}).get("enabled"):
+                log(f"  [hero] rotate mode: {len(candidates)} candidates — "
+                    "each may need an upscale (Topaz credits scale with the "
+                    "hero count; cached afterwards)")
+            hw = hero_mon["rect"][2] - hero_mon["rect"][0]
+            hh = hero_mon["rect"][3] - hero_mon["rect"][1]
+            try:
+                active_idx = candidates.index(art.get("hero"))
+            except ValueError:
+                active_idx = 0
+            candidates = [up(c, hw, hh, "hero") for c in candidates]
+            art["hero"] = candidates[active_idx]
+            art["hero_candidates"] = candidates
+    for m in monitors:
+        role = m["role"]
+        if role in art:
+            w, h = m["rect"][2] - m["rect"][0], m["rect"][3] - m["rect"][1]
+            if role in ("logo", "icon"):  # centered roles only need the fit box
+                w, h = round(w * 0.8), round(h * 0.7)
+            art[role] = up(art[role], w, h, role)
+    return submitted
+
+
 def run_pipeline(cfg, game, log, dry_run=False):
     appid, name = game.get("appid"), game["name"]
     # custom (non-Steam) games may have no appid; cache under a stable key
@@ -200,39 +252,13 @@ def run_pipeline(cfg, game, log, dry_run=False):
     # any custom keys the user's naming prompt asks for) can steer
     # generative Topaz models via prompt placeholders
     up_ctx = _upscale_context(name, pal, ai, cfg)
+    upscale_toward_monitors(cfg, art, monitors, name, log, up_ctx)
+    # re-derive after the upscale pass: rotate mode swaps candidate paths for
+    # their upscaled versions, which Stage 4 composes into slide variants
     hero_set = _hero_settings(cfg)
     candidates = [c for c in (art.get("hero_candidates") or [])
                   if isinstance(c, str)]
     rotate_ok = hero_set["mode"] == "rotate" and len(candidates) > 1
-    if rotate_ok:
-        # every candidate becomes a wallpaper variant, so upscale them ALL
-        # toward the hero monitor (cached per candidate+model: only the first
-        # rotate run per game/model spends Topaz credits)
-        hero_mon = next((m for m in monitors if m["role"] == "hero"), None)
-        if hero_mon:
-            if cfg.get("upscaling", {}).get("enabled"):
-                log(f"  [hero] rotate mode: {len(candidates)} candidates — "
-                    "each may need an upscale (Topaz credits scale with the "
-                    "hero count; cached afterwards)")
-            hw = hero_mon["rect"][2] - hero_mon["rect"][0]
-            hh = hero_mon["rect"][3] - hero_mon["rect"][1]
-            try:
-                active_idx = candidates.index(art.get("hero"))
-            except ValueError:
-                active_idx = 0
-            candidates = [upscale.maybe_upscale(c, hw, hh, cfg, log,
-                                                context=up_ctx, role="hero")
-                          for c in candidates]
-            art["hero"] = candidates[active_idx]
-            art["hero_candidates"] = candidates
-    for m in monitors:
-        role = m["role"]
-        if role in art:
-            w, h = m["rect"][2] - m["rect"][0], m["rect"][3] - m["rect"][1]
-            if role in ("logo", "icon"):  # centered roles only need the fit box
-                w, h = round(w * 0.8), round(h * 0.7)
-            art[role] = upscale.maybe_upscale(art[role], w, h, cfg, log,
-                                              context=up_ctx, role=role)
     pal["theme_name"] = theme_name
     pal["mood"] = mood
     pal["game_name"] = name  # per-game SignalRGB effect titles, gallery, etc.
@@ -368,14 +394,96 @@ def reapply_from_cache(cfg, log, cache_key):
     save_state(cfg, state)
 
 
-def fetch_library(cfg, log=print, should_cancel=lambda: False,
-                  progress=None):
-    """Ultimate Fetch: cache artwork for the ENTIRE Steam library, so themes
-    apply instantly when a game is played later. Fetch-only by design — no
-    upscaling (Topaz credits), no palette/VLM, no theme application.
+def _ufetch_upscale(cfg, art, monitors, name, log):
+    """Ultimate Fetch's upscale pass for one game. Builds the same prompt
+    context a real theme run would — a palette for appearance, and VLM
+    naming when AI is enabled (local/free; its JSON values fill generative
+    Topaz prompt placeholders) — then upscales toward the monitors.
+    Returns the number of new jobs submitted."""
+    hero = art.get("hero") or next(iter(art.values()))
+    pref = cfg.get("appearance_preference")
+    if pref not in ("dark", "light", "auto"):
+        pref = "dark" if cfg.get("force_dark_mode") else "auto"
+    pal = palette_mod.build_palette(hero, cfg.get("palette_mode", "colorful"),
+                                    force=None if pref == "auto" else pref)
+    ai = palette_mod.ai_theme_naming(cfg, hero, pal, name, log)
+    if ai and pref == "auto" and ai.get("appearance") in ("dark", "light"):
+        pal["appearance"] = ai["appearance"]
+    return upscale_toward_monitors(cfg, art, monitors, name, log,
+                                   _upscale_context(name, pal, ai, cfg))
 
-    Skips excluded appids and games whose cache is already complete, so a
-    cancelled/interrupted run resumes cheaply. Returns a stats dict.
+
+def _pending_upscales(cfg, art, monitors):
+    """Images an upscale pass would actually submit for this art — mirrors
+    upscale_toward_monitors' targeting (rotate = ALL hero candidates, pick =
+    active only; logo/icon fit boxes). Free: no credits, no downloads."""
+    hero_set = _hero_settings(cfg)
+    candidates = [c for c in (art.get("hero_candidates") or [])
+                  if isinstance(c, str)]
+    rotate_ok = hero_set["mode"] == "rotate" and len(candidates) > 1
+    count = 0
+    if rotate_ok:
+        hero_mon = next((m for m in monitors if m["role"] == "hero"), None)
+        if hero_mon:
+            hw = hero_mon["rect"][2] - hero_mon["rect"][0]
+            hh = hero_mon["rect"][3] - hero_mon["rect"][1]
+            count += sum(1 for c in candidates
+                         if upscale.pending(c, hw, hh, cfg, "hero"))
+    for m in monitors:
+        role = m["role"]
+        src = art.get(role)
+        if not src or (rotate_ok and role == "hero"):
+            continue  # rotate heroes were all counted above
+        w, h = m["rect"][2] - m["rect"][0], m["rect"][3] - m["rect"][1]
+        if role in ("logo", "icon"):
+            w, h = round(w * 0.8), round(h * 0.7)
+        if upscale.pending(src, w, h, cfg, role):
+            count += 1
+    return count
+
+
+def upscale_pending_estimate(cfg, log=print):
+    """Pre-flight for Ultimate Fetch's upscale option: how many images in
+    the EXISTING cache a pass would submit (smaller than their target, no
+    cached result). Games whose art isn't fetched yet add more on top.
+    Never spends credits or touches the network."""
+    empty = {"games": 0, "images": 0}
+    if not cfg.get("upscaling", {}).get("enabled"):
+        return empty
+    monitors = theme_mod.assign_roles(theme_mod.enumerate_monitors(),
+                                      cfg.get("monitors", []), log)
+    root = cfg_path(cfg, "cache_dir", "cache")
+    try:
+        entries = sorted(os.listdir(root))
+    except OSError:
+        return empty
+    games = images = 0
+    for entry in entries:
+        cache = os.path.join(root, entry)
+        if not os.path.isdir(cache):
+            continue
+        art = artwork.art_from_cache(cache)
+        if not art:
+            continue
+        n = _pending_upscales(cfg, art, monitors)
+        if n:
+            games += 1
+            images += n
+    return {"games": games, "images": images}
+
+
+def fetch_library(cfg, log=print, should_cancel=lambda: False,
+                  progress=None, with_upscale=False):
+    """Ultimate Fetch: cache artwork for the ENTIRE Steam library, so themes
+    apply instantly when a game is played later. Never applies a theme.
+
+    Fetch-only by default. with_upscale=True also runs the theme-time
+    upscale pass per game (SPENDS TOPAZ CREDITS — cached per model, so
+    re-runs only do new work); when AI naming is enabled it runs too, so
+    generative prompt placeholders ({mood} & co) are filled.
+
+    Skips excluded appids and (fetch-wise) games whose cache is complete, so
+    a cancelled/interrupted run resumes cheaply. Returns a stats dict.
     """
     if not cfg.get("steam_api_key"):
         raise ValueError("no Steam API key configured")
@@ -384,10 +492,23 @@ def fetch_library(cfg, log=print, should_cancel=lambda: False,
     excludes = set(cfg.get("exclude_appids", []) or [])
     root = cfg_path(cfg, "cache_dir", "cache")
     hero_count = artwork.hero_count_for(cfg)
-    stats = {"total": len(games), "fetched": 0, "skipped": 0,
-             "excluded": 0, "failed": 0, "cancelled": False}
+    stats = {"total": len(games), "fetched": 0, "skipped": 0, "excluded": 0,
+             "failed": 0, "upscaled": 0, "cancelled": False}
+    monitors = None
+    if with_upscale:
+        if cfg.get("upscaling", {}).get("enabled"):
+            monitors = theme_mod.assign_roles(theme_mod.enumerate_monitors(),
+                                              cfg.get("monitors", []), log)
+            log("ultimate fetch: UPSCALING ENABLED — this spends Topaz "
+                "credits on art smaller than its target monitor (results "
+                "cached per model; already-upscaled images are skipped)")
+        else:
+            log("ultimate fetch: upscaling requested but disabled in the "
+                "config — running fetch-only")
+            with_upscale = False
     log(f"ultimate fetch: {len(games)} games in the library, "
-        f"hero count {hero_count} — upscaling NOT included")
+        f"hero count {hero_count}"
+        f"{'' if with_upscale else ' — upscaling NOT included'}")
     for i, g in enumerate(games):
         if should_cancel():
             stats["cancelled"] = True
@@ -405,30 +526,42 @@ def fetch_library(cfg, log=print, should_cancel=lambda: False,
         except ValueError:
             stats["failed"] += 1
             continue
+        art = None
         if artwork.art_is_cached(cache, hero_count):
-            stats["skipped"] += 1
-            continue
-        try:
-            log(f"  [ufetch] {i + 1}/{stats['total']}: {name}")
-            art = artwork.fetch_artwork(appid, name, g.get("icon_url"),
-                                        {**cfg, "cache_dir": root}, log,
-                                        cache_key=str(appid))
-            if art:
-                stats["fetched"] += 1
-            else:
+            if not with_upscale:
+                stats["skipped"] += 1
+                continue
+            # already fetched — still due an upscale pass if results are missing
+            art = artwork.art_from_cache(cache)
+        else:
+            try:
+                log(f"  [ufetch] {i + 1}/{stats['total']}: {name}")
+                art = artwork.fetch_artwork(appid, name, g.get("icon_url"),
+                                            {**cfg, "cache_dir": root}, log,
+                                            cache_key=str(appid))
+                if art:
+                    stats["fetched"] += 1
+                else:
+                    stats["failed"] += 1
+                    log(f"  [ufetch] {name}: no artwork found")
+            except Exception as e:
                 stats["failed"] += 1
-                log(f"  [ufetch] {name}: no artwork found")
-        except Exception as e:
-            stats["failed"] += 1
-            log(f"  [ufetch] {name}: {e}")
-        time.sleep(0.5)  # be polite to SteamGridDB / the CDNs
+                log(f"  [ufetch] {name}: {e}")
+            time.sleep(0.5)  # be polite to SteamGridDB / the CDNs
+        if art and with_upscale:
+            try:
+                stats["upscaled"] += _ufetch_upscale(cfg, art, monitors,
+                                                     name, log)
+            except Exception as e:
+                log(f"  [ufetch] {name}: upscale pass failed: {e}")
     if progress:
         progress(stats["total"] if not stats["cancelled"] else i,
                  stats["total"], "")
     log(f"ultimate fetch finished: {stats['fetched']} fetched, "
         f"{stats['skipped']} already cached, {stats['excluded']} excluded, "
         f"{stats['failed']} failed"
-        f"{' (cancelled)' if stats['cancelled'] else ''}")
+        + (f", {stats['upscaled']} images upscaled" if with_upscale else "")
+        + f"{' (cancelled)' if stats['cancelled'] else ''}")
     return stats
 
 
@@ -589,6 +722,9 @@ def main():
     ap.add_argument("--appid", type=int, default=None)
     ap.add_argument("--fetch-all", action="store_true",
                     help="cache artwork for the entire Steam library, then exit")
+    ap.add_argument("--upscale", action="store_true",
+                    help="with --fetch-all: also upscale fetched art toward "
+                         "your monitors (spends Topaz credits)")
     ap.add_argument("--ui", action="store_true", help="open the browser config page")
     ap.add_argument("--port", type=int, default=8765)
     args = ap.parse_args()
@@ -608,7 +744,7 @@ def main():
         reapply(cfg, log)
         return
     if args.fetch_all:
-        fetch_library(cfg, log)
+        fetch_library(cfg, log, with_upscale=args.upscale)
         return
     if args.once or args.appid or args.dry_run:
         check_once(cfg, log, force=args.force, appid_override=args.appid,

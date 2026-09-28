@@ -12,6 +12,7 @@ import unittest
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -181,6 +182,29 @@ class TestFetchAllEndpoints(ServerFixture):
         with urllib.request.urlopen(r, timeout=5) as resp:
             data = json.loads(resp.read())
         self.assertFalse(data["ok"])
+
+    def test_upscale_option_requires_upscaling_enabled(self):
+        # opting into credits with upscaling disabled must fail BEFORE the
+        # worker thread starts (no silent fetch-only surprise)
+        import main
+        webui.FETCH_ALL["running"] = False
+        with mock.patch.object(main, "load_config",
+                               lambda: {"upscaling": {"enabled": False}}):
+            code = self.req("/api/fetch-all", "POST", body={"upscale": True})
+        self.assertEqual(code, 400)
+        self.assertFalse(webui.FETCH_ALL["running"])  # nothing started
+
+    def test_upscale_estimate_endpoint_passthrough(self):
+        import main
+        with mock.patch.object(main, "upscale_pending_estimate",
+                               lambda cfg, log: {"games": 2, "images": 5}):
+            r = urllib.request.Request(
+                f"http://127.0.0.1:{self.port}/api/fetch-all-upscale-estimate")
+            with urllib.request.urlopen(r, timeout=5) as resp:
+                data = json.loads(resp.read())
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["images"], 5)
+        self.assertEqual(data["games"], 2)
 
 
 if __name__ == "__main__":

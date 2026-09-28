@@ -64,6 +64,26 @@ def _needs_upscale(path, target_w, target_h):
     return (w < target_w or h < target_h), (w, h)
 
 
+def cache_path(src, cfg, role=None):
+    """Where the upscale of src with the currently configured provider/model
+    would be cached. The model slug in the filename means switching models
+    re-generates (old caches are simply unused, never re-billed)."""
+    up = cfg.get("upscaling", {})
+    model = _model_for(cfg.get("topaz", {}), role) \
+        if up.get("provider") == "topaz" else "ai"
+    return os.path.splitext(src)[0] + f"_upscaled_{_slug(model)}.png"
+
+
+def pending(src, target_w, target_h, cfg, role=None):
+    """True if an upscale pass would actually submit a job for src: it needs
+    enlargement toward the target AND has no cached result yet. Never spends
+    anything — used for Ultimate Fetch's pre-flight credit estimate."""
+    if not cfg.get("upscaling", {}).get("enabled"):
+        return False
+    needed, _ = _needs_upscale(src, target_w, target_h)
+    return needed and not os.path.exists(cache_path(src, cfg, role))
+
+
 def _topaz(src, dst, cfg, log, target_w, target_h, context=None, role=None,
            timeout_s=600):
     topaz = cfg.get("topaz", {})
@@ -191,7 +211,7 @@ def maybe_upscale(path, target_w, target_h, cfg, log=print, context=None,
         return path
     # cache key includes the effective model, so switching models regenerates
     model = _model_for(cfg.get("topaz", {}), role) if up.get("provider") == "topaz" else "ai"
-    dst = os.path.splitext(path)[0] + f"_upscaled_{_slug(model)}.png"
+    dst = cache_path(path, cfg, role)
     if os.path.exists(dst):
         return dst  # one upscale per source+model; never re-spend credits
     log(f"  [up] {os.path.basename(path)} is {w}x{h}, target {target_w}x{target_h}, "

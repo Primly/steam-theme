@@ -386,6 +386,41 @@ class TestHeroCandidates(unittest.TestCase):
         self.assertTrue(artwork.active_hero(self.dir).endswith("hero_2.jpg"))
 
 
+class TestArtFromCache(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(
+            self.dir, ignore_errors=True))
+
+    def _mk(self, name):
+        p = os.path.join(self.dir, name)
+        with open(p, "wb") as f:
+            f.write(b"x")
+        return p
+
+    def test_rebuilds_art_dict(self):
+        self._mk("hero_1.jpg"); self._mk("hero_2.png")
+        self._mk("hero_1_upscaled_bloom-2.png")  # upscale cache must not leak
+        self._mk("logo.png"); self._mk("icon.jpg")
+        art = artwork.art_from_cache(self.dir)
+        self.assertEqual([os.path.basename(p) for p in art["hero_candidates"]],
+                         ["hero_1.jpg", "hero_2.png"])
+        self.assertTrue(art["hero"].endswith("hero_1.jpg"))
+        self.assertTrue(art["logo"].endswith("logo.png"))
+        self.assertTrue(art["icon"].endswith("icon.jpg"))
+
+    def test_respects_hero_choice(self):
+        self._mk("hero_1.jpg"); self._mk("hero_2.png")
+        artwork.set_hero_choice(self.dir, 1)
+        self.assertTrue(artwork.art_from_cache(self.dir)["hero"]
+                        .endswith("hero_2.png"))
+
+    def test_empty_or_missing_folder(self):
+        self.assertIsNone(artwork.art_from_cache(self.dir))
+        self.assertIsNone(artwork.art_from_cache(
+            os.path.join(self.dir, "does-not-exist")))
+
+
 class TestNormalizeImage(unittest.TestCase):
     """Downloads are normalized to real JPEG/PNG with matching extensions —
     Topaz rejects anything else (Steam community icons are ICO, some SGDB
@@ -548,6 +583,132 @@ class TestFetchLibrary(unittest.TestCase):
     def test_requires_steam_key(self):
         with self.assertRaises(ValueError):
             main.fetch_library({"steam_api_key": ""}, lambda m: None)
+
+
+class TestFetchLibraryUpscale(unittest.TestCase):
+    """Ultimate Fetch's upscale option: runs the theme-time upscale pass per
+    game (freshly fetched AND already-cached), credit-safe via the per-model
+    upscale cache. The fake maybe_upscale simulates real cache semantics."""
+
+    GAMES = [{"appid": 440, "name": "TF2", "icon_url": None},
+             {"appid": 570, "name": "Dota 2", "icon_url": None}]
+    MONS = [{"name": "H", "role": "hero", "rect": (0, 0, 5120, 1440)},
+            {"name": "L", "role": "logo", "rect": (0, 0, 2560, 1440)},
+            {"name": "I", "role": "icon", "rect": (0, 0, 1600, 900)}]
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(dir=main.BASE_DIR)
+        self.addCleanup(lambda: __import__("shutil").rmtree(
+            self.tmp, ignore_errors=True))
+        rel = os.path.relpath(self.tmp, main.BASE_DIR)
+        self.cfg = {"steam_api_key": "k", "steam_id64": "1",
+                    "cache_dir": rel, "log_file": os.path.join(rel, "x.log"),
+                    "hero": {"count": 2},
+                    "upscaling": {"enabled": True, "provider": "topaz"},
+                    "topaz": {"model": "Bloom 2"}}
+        self._mkart(os.path.join(self.tmp, "440"))  # fully cached game
+        self.upscale_calls = []
+        patches = [
+            mock.patch.object(main.steamdetect, "get_owned_games",
+                              lambda k, s: list(self.GAMES)),
+            mock.patch.object(main.artwork, "fetch_artwork", self._fake_fetch),
+            mock.patch.object(main.time, "sleep"),
+            mock.patch.object(main.theme_mod, "enumerate_monitors",
+                              lambda: list(self.MONS)),
+            mock.patch.object(main.theme_mod, "assign_roles",
+                              lambda mons, cfg, log: list(self.MONS)),
+            mock.patch.object(main.upscale, "maybe_upscale",
+                              self._fake_upscale),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _mkart(self, cache):
+        """A complete 2-hero art set of real (tiny) images."""
+        from PIL import Image
+        os.makedirs(cache, exist_ok=True)
+        for n in ("hero_1.jpg", "hero_2.jpg", "logo.jpg", "icon.jpg"):
+            Image.new("RGB", (32, 32), (10, 20, 30)).save(
+                os.path.join(cache, n), "JPEG")
+
+    def _fake_fetch(self, appid, name, icon_url, cfg, log, cache_key=None):
+        cache = os.path.join(cfg["cache_dir"], cache_key or str(appid))
+        self._mkart(cache)
+        return artwork.art_from_cache(cache)
+
+    def _fake_upscale(self, path, w, h, cfg, log, context=None, role=None):
+        """Real cache semantics: an existing cache file or an already-
+        upscaled source returns without 'spending'; otherwise the job
+        produces the cache file and is recorded."""
+        dst = main.upscale.cache_path(path, cfg, role)
+        if os.path.exists(dst):
+            return dst
+        if "_upscaled_" in os.path.basename(path):
+            return path
+        with open(dst, "wb") as f:
+            f.write(b"x")
+        self.upscale_calls.append((os.path.basename(path), role))
+        return dst
+
+    def _run(self, **kw):
+        return main.fetch_library(self.cfg, lambda m: None, **kw)
+
+    def test_pick_mode_upscales_active_hero_logo_icon(self):
+        stats = self._run(with_upscale=True)
+        self.assertEqual(stats["upscaled"], 6)  # 3 roles x 2 games
+        self.assertEqual(self.upscale_calls.count(("hero_1.jpg", "hero")), 2)
+        self.assertNotIn(("hero_2.jpg", "hero"), self.upscale_calls)
+        self.assertEqual(self.upscale_calls.count(("logo.jpg", "logo")), 2)
+        self.assertEqual(self.upscale_calls.count(("icon.jpg", "icon")), 2)
+
+    def test_rotate_mode_upscales_every_candidate(self):
+        self.cfg["hero"]["mode"] = "rotate"
+        stats = self._run(with_upscale=True)
+        self.assertEqual(stats["upscaled"], 8)  # (2 heroes + logo + icon) x 2
+        self.assertEqual(self.upscale_calls.count(("hero_1.jpg", "hero")), 2)
+        self.assertEqual(self.upscale_calls.count(("hero_2.jpg", "hero")), 2)
+
+    def test_without_upscale_flag_nothing_upscales(self):
+        stats = self._run()
+        self.assertEqual(stats["upscaled"], 0)
+        self.assertEqual(self.upscale_calls, [])
+        self.assertEqual(stats["skipped"], 1)   # 440 already cached
+        self.assertEqual(stats["fetched"], 1)   # 570
+
+    def test_resume_does_not_respend_cached_upscales(self):
+        # 440's active hero was already upscaled by an earlier run
+        dst = main.upscale.cache_path(
+            os.path.join(self.tmp, "440", "hero_1.jpg"), self.cfg, "hero")
+        with open(dst, "wb") as f:
+            f.write(b"x")
+        stats = self._run(with_upscale=True)
+        # 440 contributes logo + icon only; 570 contributes hero + logo + icon
+        self.assertEqual(stats["upscaled"], 5)
+        self.assertEqual(self.upscale_calls.count(("hero_1.jpg", "hero")), 1)
+
+    def test_estimate_counts_pending_images(self):
+        est = main.upscale_pending_estimate(self.cfg, lambda m: None)
+        self.assertEqual(est, {"games": 1, "images": 3})  # 440 only; 570 unfetched
+
+    def test_estimate_rotate_counts_all_candidates(self):
+        self.cfg["hero"]["mode"] = "rotate"
+        est = main.upscale_pending_estimate(self.cfg, lambda m: None)
+        self.assertEqual(est, {"games": 1, "images": 4})
+
+    def test_estimate_skips_cached_upscales(self):
+        dst = main.upscale.cache_path(
+            os.path.join(self.tmp, "440", "hero_1.jpg"), self.cfg, "hero")
+        with open(dst, "wb") as f:
+            f.write(b"x")
+        est = main.upscale_pending_estimate(self.cfg, lambda m: None)
+        self.assertEqual(est["images"], 2)  # logo + icon still pending
+
+    def test_estimate_zero_when_upscaling_disabled(self):
+        self.cfg["upscaling"]["enabled"] = False
+        self.assertEqual(
+            main.upscale_pending_estimate(self.cfg, lambda m: None),
+            {"games": 0, "images": 0})
 
 
 class TestSgdbMultiHero(unittest.TestCase):

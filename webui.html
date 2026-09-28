@@ -394,9 +394,13 @@
     candidates, logo and icon — so themes apply instantly when you play something new.
     Skips games that are already fully cached and anything on your exclude list.</p>
   <p class="hint">⚠️ <b>This takes a while</b> — a few seconds per game, so a big library can
-    take the better part of an hour, and uses a few hundred MB of disk. It never upscales
-    (no Topaz credits) and never changes your theme. Safe to cancel and re-run —
-    already-cached games are skipped, so it picks up where it left off.</p>
+    take the better part of an hour, and uses a few hundred MB of disk. It never changes
+    your theme. Safe to cancel and re-run — already-processed games are skipped, so it
+    picks up where it left off.</p>
+  <div class="row">
+    <div class="switch"><input type="checkbox" id="ufetchUpscale" onchange="ufetchEstimate()"><span>Also upscale fetched art toward my monitors</span></div>
+  </div>
+  <p class="hint" id="ufetchUpHint" style="display:none"></p>
   <div class="row">
     <button id="ufetchBtn" onclick="startUFetch()">Start Ultimate Fetch</button>
     <button id="ufetchCancel" onclick="cancelUFetch()" style="display:none">Cancel</button>
@@ -600,6 +604,11 @@ async function load() {
   setC("heroShuffle", hero.shuffle);
   heroModeChanged();
   setV("poll", cfg.poll_interval_seconds ?? 30);
+  // Ultimate Fetch's upscale option needs upscaling enabled+configured
+  const uu = document.getElementById("ufetchUpscale");
+  uu.disabled = !((cfg.upscaling || {}).enabled);
+  uu.parentElement.title = uu.disabled
+    ? "Enable upscaling in the Upscaling section first" : "";
   setV("excludes", (cfg.exclude_appids || []).join(", "));
   setC("nowPlaying", cfg.now_playing !== false);
   setV("customGames", (cfg.custom_games || [])
@@ -837,17 +846,40 @@ async function loadGallery() {
 let ufetchTimer = null;
 
 async function startUFetch() {
+  const up = document.getElementById("ufetchUpscale").checked;
   if (!confirm("Fetch artwork for your ENTIRE Steam library?\n\n" +
                "This takes a while (a few seconds per game — a big library can take " +
                "the better part of an hour) and downloads a few hundred MB. " +
-               "No themes are applied and no Topaz credits are used.\n\nContinue?"))
+               "No themes are applied." +
+               (up ? "\n\n💳 UPSCALING IS ON: this spends Topaz credits on every " +
+                     "undersized image (see the estimate under the checkbox). With " +
+                     "AI naming enabled, the VLM also runs per game so prompt " +
+                     "placeholders are filled — expect it to take much longer."
+                   : "\n\nNo Topaz credits are used.") +
+               "\n\nContinue?"))
     return;
-  const r = await api("/api/fetch-all", {});
+  const r = await api("/api/fetch-all", {upscale: up});
   const st = document.getElementById("ufetchStatus");
   if (!r.ok) { st.textContent = r.error || "failed to start"; return; }
   st.textContent = r.detail;
   pollUFetch();
   setTimeout(refreshLog, 2000);
+}
+
+async function ufetchEstimate() {
+  const on = document.getElementById("ufetchUpscale").checked;
+  const hint = document.getElementById("ufetchUpHint");
+  if (!on) { hint.style.display = "none"; return; }
+  hint.style.display = "";
+  hint.textContent = "Estimating pending upscales in your cache…";
+  const r = await api("/api/fetch-all-upscale-estimate");
+  if (!r.ok) { hint.textContent = "estimate failed: " + (r.error || "unknown"); return; }
+  hint.textContent =
+    `💳 ${r.images} cached image${r.images === 1 ? "" : "s"} across ${r.games} ` +
+    `game${r.games === 1 ? "" : "s"} need upscaling right now — games not yet ` +
+    `fetched add more. Each submission spends Topaz credits (~1 per 2 MP of ` +
+    `output on generative models); results are cached, so this is a one-time ` +
+    `cost per image per model. Rotate mode upscales EVERY hero candidate.`;
 }
 
 async function cancelUFetch() {
@@ -873,6 +905,7 @@ function renderUFetch(s) {
     st.textContent = s.error ? "error: " + s.error
       : `done — ${s.stats.fetched} fetched, ${s.stats.skipped} already cached, ` +
         `${s.stats.excluded} excluded, ${s.stats.failed} failed` +
+        (s.upscale ? `, ${s.stats.upscaled} images upscaled` : "") +
         (s.stats.cancelled ? " (cancelled)" : "");
   }
 }
