@@ -154,5 +154,34 @@ class TestHeroChoiceEndpoint(ServerFixture):
         self.assertEqual(code, 400)
 
 
+class TestFetchAllEndpoints(ServerFixture):
+    def test_status_shape(self):
+        r = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/fetch-all-status")
+        with urllib.request.urlopen(r, timeout=5) as resp:
+            data = json.loads(resp.read())
+        self.assertIn("running", data)
+        self.assertIn("done", data)
+        self.assertIn("total", data)
+
+    def test_double_start_rejected(self):
+        # simulate a running fetch without starting a worker (no network)
+        webui.FETCH_ALL["running"] = True
+        try:
+            self.assertEqual(self.req("/api/fetch-all", "POST", body={}), 409)
+        finally:
+            webui.FETCH_ALL["running"] = False
+
+    def test_cancel_when_idle_is_harmless(self):
+        webui.FETCH_ALL["running"] = False
+        r = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/fetch-all-cancel",
+            method="POST", data=b"{}",
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(r, timeout=5) as resp:
+            data = json.loads(resp.read())
+        self.assertFalse(data["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()

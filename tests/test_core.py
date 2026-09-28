@@ -435,6 +435,100 @@ class TestNormalizeImage(unittest.TestCase):
         self.assertTrue(artwork.active_hero(self.dir).endswith("hero_1.png"))
 
 
+class TestArtCompleteness(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(
+            self.dir, ignore_errors=True))
+
+    def _mk(self, name):
+        p = os.path.join(self.dir, name)
+        with open(p, "wb") as f:
+            f.write(b"x")
+        return p
+
+    def test_hero_count_for(self):
+        self.assertEqual(artwork.hero_count_for({}), 6)
+        self.assertEqual(artwork.hero_count_for({"hero": {"count": 3}}), 3)
+        self.assertEqual(artwork.hero_count_for({"hero": {"count": 99}}),
+                         artwork.MAX_HERO_CANDIDATES)
+        self.assertEqual(artwork.hero_count_for({"hero": {"count": "x"}}), 6)
+        self.assertEqual(artwork.hero_count_for({"hero": "junk"}), 6)
+
+    def test_art_is_cached(self):
+        self.assertFalse(artwork.art_is_cached(self.dir, 2))
+        self._mk("hero_1.jpg"); self._mk("hero_2.jpg")
+        self.assertFalse(artwork.art_is_cached(self.dir, 2))  # no logo/icon
+        self._mk("logo.jpg")
+        self.assertFalse(artwork.art_is_cached(self.dir, 2))  # no icon
+        self._mk("icon.png")  # either extension counts
+        self.assertTrue(artwork.art_is_cached(self.dir, 2))
+        self.assertFalse(artwork.art_is_cached(self.dir, 3))  # count too low
+
+
+class TestFetchLibrary(unittest.TestCase):
+    GAMES = [{"appid": 440, "name": "TF2", "icon_url": None},
+             {"appid": 570, "name": "Dota 2", "icon_url": None},
+             {"appid": 620, "name": "Portal 2", "icon_url": None},
+             {"appid": 730, "name": "CS2", "icon_url": None}]
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(dir=main.BASE_DIR)
+        self.addCleanup(lambda: __import__("shutil").rmtree(
+            self.tmp, ignore_errors=True))
+        rel = os.path.relpath(self.tmp, main.BASE_DIR)
+        self.cfg = {"steam_api_key": "k", "steam_id64": "1",
+                    "cache_dir": rel, "log_file": os.path.join(rel, "x.log"),
+                    "exclude_appids": [570], "hero": {"count": 2}}
+        # 440 is fully cached (2 heroes + logo + icon); the rest are not
+        c440 = os.path.join(self.tmp, "440")
+        os.makedirs(c440)
+        for n in ("hero_1.jpg", "hero_2.jpg", "logo.jpg", "icon.png"):
+            with open(os.path.join(c440, n), "wb") as f:
+                f.write(b"x")
+        self.calls = []
+        patches = [
+            mock.patch.object(main.steamdetect, "get_owned_games",
+                              lambda k, s: list(self.GAMES)),
+            mock.patch.object(main.artwork, "fetch_artwork",
+                              self._fake_fetch),
+            mock.patch.object(main.time, "sleep"),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _fake_fetch(self, appid, name, icon_url, cfg, log, cache_key=None):
+        self.calls.append(appid)
+        return {"hero": "x"} if appid != 730 else None  # 730 'fails'
+
+    def test_skips_excluded_and_complete(self):
+        stats = main.fetch_library(self.cfg, lambda m: None)
+        self.assertEqual(self.calls, [620, 730])
+        self.assertEqual(stats["skipped"], 1)    # 440 already cached
+        self.assertEqual(stats["excluded"], 1)   # 570 on the exclude list
+        self.assertEqual(stats["fetched"], 1)    # 620
+        self.assertEqual(stats["failed"], 1)     # 730 returned nothing
+        self.assertFalse(stats["cancelled"])
+
+    def test_cancel_stops_early(self):
+        seen = []
+
+        def cancel():
+            return len(seen) >= 1  # cancel after the first processed game
+
+        def progress(i, total, name):
+            seen.append(i)
+        stats = main.fetch_library(self.cfg, lambda m: None,
+                                   should_cancel=cancel, progress=progress)
+        self.assertTrue(stats["cancelled"])
+        self.assertLess(len(self.calls), 2)
+
+    def test_requires_steam_key(self):
+        with self.assertRaises(ValueError):
+            main.fetch_library({"steam_api_key": ""}, lambda m: None)
+
+
 class TestSgdbMultiHero(unittest.TestCase):
     def test_heroes_sliced_to_count(self):
         def fake_get(path, key, params=None):

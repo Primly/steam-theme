@@ -16,6 +16,9 @@ API:
   POST /api/run-now             run the pipeline once in a background thread
   GET  /api/art?key&role&i      cached art; role=hero&i=N serves candidate N
   POST /api/hero-choice         {key, index} pick a hero candidate + regenerate
+  POST /api/fetch-all           Ultimate Fetch: cache art for the whole library
+  GET  /api/fetch-all-status    Ultimate Fetch progress
+  POST /api/fetch-all-cancel    cancel a running Ultimate Fetch
 """
 
 import json
@@ -159,6 +162,11 @@ def test_topaz(body):
 
 
 TESTS = {"steam": test_steam, "sgdb": test_sgdb, "ai": test_ai, "topaz": test_topaz}
+
+# Ultimate Fetch progress (single worker at a time; written by its thread,
+# read by the status endpoint — plain dict swaps are GIL-atomic enough here)
+FETCH_ALL = {"running": False, "done": 0, "total": 0, "current": "",
+             "cancel_requested": False, "stats": None, "error": None}
 
 
 def _gallery():
@@ -313,6 +321,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, state)
         elif path == "/api/gallery":
             self._send(200, {"ok": True, "themes": _gallery()})
+        elif path == "/api/fetch-all-status":
+            self._send(200, dict(FETCH_ALL))
         elif path == "/api/art":
             import artwork
             import main as app
@@ -464,6 +474,42 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"ok": True,
                              "detail": f"hero #{index + 1} selected — regenerating "
                                        "(a new hero may need one upscale; watch the log)"})
+        elif path == "/api/fetch-all":
+            if FETCH_ALL["running"]:
+                self._send(409, {"ok": False,
+                                 "error": "Ultimate Fetch is already running"})
+                return
+            FETCH_ALL.update(running=True, done=0, total=0, current="",
+                             cancel_requested=False, stats=None, error=None)
+
+            def work():
+                import main as app
+                cfg = app.load_config()
+                log = app._log_factory(cfg)
+                try:
+                    stats = app.fetch_library(
+                        cfg, log,
+                        should_cancel=lambda: FETCH_ALL["cancel_requested"],
+                        progress=lambda i, total, name: FETCH_ALL.update(
+                            done=i, total=total, current=name))
+                    FETCH_ALL["stats"] = stats
+                except Exception as e:
+                    FETCH_ALL["error"] = str(e)
+                    log(f"ultimate fetch error: {e}")
+                finally:
+                    FETCH_ALL["running"] = False
+                    FETCH_ALL["current"] = ""
+            threading.Thread(target=work, daemon=True).start()
+            self._send(200, {"ok": True,
+                             "detail": "Ultimate Fetch started — watch the "
+                                      "progress bar or the activity log"})
+        elif path == "/api/fetch-all-cancel":
+            if not FETCH_ALL["running"]:
+                self._send(200, {"ok": False, "error": "nothing is running"})
+                return
+            FETCH_ALL["cancel_requested"] = True
+            self._send(200, {"ok": True,
+                             "detail": "cancelling after the current game…"})
         elif path == "/api/apply-theme":
             import re as _re
             key = str(body.get("key") or "")

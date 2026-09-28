@@ -200,6 +200,28 @@ def active_hero(cache_dir):
     return cands[hero_choice(cache_dir)] if cands else None
 
 
+def hero_count_for(cfg):
+    """Sanitized cfg['hero']['count'] (1..MAX_HERO_CANDIDATES, default 6)."""
+    hero_cfg = cfg.get("hero") if isinstance(cfg.get("hero"), dict) else {}
+    try:
+        n = int(hero_cfg.get("count", 6) or 6)
+    except (TypeError, ValueError):
+        n = 6
+    return max(1, min(n, MAX_HERO_CANDIDATES))
+
+
+def art_is_cached(cache_dir, hero_count=1):
+    """True when the cache folder already has the full art set: at least
+    hero_count hero candidates plus a logo and an icon. Used by Ultimate
+    Fetch to skip complete games without touching the network."""
+    if len(hero_candidates(cache_dir)) < max(1, hero_count):
+        return False
+    return all(
+        any(os.path.exists(os.path.join(cache_dir, f"{role}{ext}"))
+            for ext in (".jpg", ".png"))
+        for role in ("logo", "icon"))
+
+
 def set_hero_choice(cache_dir, index):
     """Persist the user's hero pick; regenerate applies it."""
     n = len(hero_candidates(cache_dir))
@@ -226,12 +248,7 @@ def fetch_artwork(appid, name, icon_url, cfg, log=print, cache_key=None):
     cache = os.path.join(cfg["cache_dir"], cache_key or str(appid))
     os.makedirs(cache, exist_ok=True)
     sgdb_key = cfg.get("steamgriddb_api_key") or ""
-    hero_cfg = cfg.get("hero") if isinstance(cfg.get("hero"), dict) else {}
-    try:
-        hero_count = int(hero_cfg.get("count", 6) or 6)
-    except (TypeError, ValueError):
-        hero_count = 6
-    hero_count = max(1, min(hero_count, MAX_HERO_CANDIDATES))
+    hero_count = hero_count_for(cfg)
 
     hero_urls, logo_urls, icon_urls = [], [], []
 

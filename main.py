@@ -35,7 +35,7 @@ else:
     import linux_theme as theme_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-__version__ = "1.4.1"
+__version__ = "1.5.0"
 
 
 def safe_join(base, *parts):
@@ -329,6 +329,70 @@ def reapply_from_cache(cfg, log, cache_key):
     save_state(cfg, state)
 
 
+def fetch_library(cfg, log=print, should_cancel=lambda: False,
+                  progress=None):
+    """Ultimate Fetch: cache artwork for the ENTIRE Steam library, so themes
+    apply instantly when a game is played later. Fetch-only by design — no
+    upscaling (Topaz credits), no palette/VLM, no theme application.
+
+    Skips excluded appids and games whose cache is already complete, so a
+    cancelled/interrupted run resumes cheaply. Returns a stats dict.
+    """
+    if not cfg.get("steam_api_key"):
+        raise ValueError("no Steam API key configured")
+    steam_id = cfg.get("steam_id64") or steamdetect.get_steam_id64()
+    games = steamdetect.get_owned_games(cfg["steam_api_key"], steam_id)
+    excludes = set(cfg.get("exclude_appids", []) or [])
+    root = cfg_path(cfg, "cache_dir", "cache")
+    hero_count = artwork.hero_count_for(cfg)
+    stats = {"total": len(games), "fetched": 0, "skipped": 0,
+             "excluded": 0, "failed": 0, "cancelled": False}
+    log(f"ultimate fetch: {len(games)} games in the library, "
+        f"hero count {hero_count} — upscaling NOT included")
+    for i, g in enumerate(games):
+        if should_cancel():
+            stats["cancelled"] = True
+            log(f"  [ufetch] cancelled after {i} games")
+            break
+        appid = g.get("appid")
+        name = g.get("name") or f"app {appid}"
+        if progress:
+            progress(i, stats["total"], name)
+        if appid in excludes:
+            stats["excluded"] += 1
+            continue
+        try:
+            cache = safe_join(root, str(appid))
+        except ValueError:
+            stats["failed"] += 1
+            continue
+        if artwork.art_is_cached(cache, hero_count):
+            stats["skipped"] += 1
+            continue
+        try:
+            log(f"  [ufetch] {i + 1}/{stats['total']}: {name}")
+            art = artwork.fetch_artwork(appid, name, g.get("icon_url"),
+                                        {**cfg, "cache_dir": root}, log,
+                                        cache_key=str(appid))
+            if art:
+                stats["fetched"] += 1
+            else:
+                stats["failed"] += 1
+                log(f"  [ufetch] {name}: no artwork found")
+        except Exception as e:
+            stats["failed"] += 1
+            log(f"  [ufetch] {name}: {e}")
+        time.sleep(0.5)  # be polite to SteamGridDB / the CDNs
+    if progress:
+        progress(stats["total"] if not stats["cancelled"] else i,
+                 stats["total"], "")
+    log(f"ultimate fetch finished: {stats['fetched']} fetched, "
+        f"{stats['skipped']} already cached, {stats['excluded']} excluded, "
+        f"{stats['failed']} failed"
+        f"{' (cancelled)' if stats['cancelled'] else ''}")
+    return stats
+
+
 def check_once(cfg, log, force=False, appid_override=None, dry_run=False):
     """Detection priority: custom (non-Steam) process > Steam now-playing >
     Steam last-played. Theming is keyed per game ('identity'), so replaying
@@ -479,6 +543,8 @@ def main():
     ap.add_argument("--reapply", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--appid", type=int, default=None)
+    ap.add_argument("--fetch-all", action="store_true",
+                    help="cache artwork for the entire Steam library, then exit")
     ap.add_argument("--ui", action="store_true", help="open the browser config page")
     ap.add_argument("--port", type=int, default=8765)
     args = ap.parse_args()
@@ -496,6 +562,9 @@ def main():
 
     if args.reapply:
         reapply(cfg, log)
+        return
+    if args.fetch_all:
+        fetch_library(cfg, log)
         return
     if args.once or args.appid or args.dry_run:
         check_once(cfg, log, force=args.force, appid_override=args.appid,

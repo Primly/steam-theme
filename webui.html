@@ -71,6 +71,10 @@
                background: #0b0b0e; }
   .herothumb:hover { opacity: 1; border-color: var(--accent); }
   .herothumb.active { outline: 2px solid var(--accent); opacity: 1; cursor: default; }
+  .pbar { height: 8px; background: var(--panel2); border: 1px solid var(--border);
+          border-radius: 5px; overflow: hidden; margin-top: 10px; }
+  .pbar > div { height: 100%; background: var(--accent); width: 0%;
+                transition: width .4s ease; }
   #ver { margin-left: auto; }
 </style>
 </head>
@@ -380,6 +384,23 @@
 </section>
 
 <section>
+  <h2>Ultimate Fetch</h2>
+  <p class="hint">Pre-cache artwork for your <b>entire Steam library</b> — every game's hero
+    candidates, logo and icon — so themes apply instantly when you play something new.
+    Skips games that are already fully cached and anything on your exclude list.</p>
+  <p class="hint">⚠️ <b>This takes a while</b> — a few seconds per game, so a big library can
+    take the better part of an hour, and uses a few hundred MB of disk. It never upscales
+    (no Topaz credits) and never changes your theme. Safe to cancel and re-run —
+    already-cached games are skipped, so it picks up where it left off.</p>
+  <div class="row">
+    <button id="ufetchBtn" onclick="startUFetch()">Start Ultimate Fetch</button>
+    <button id="ufetchCancel" onclick="cancelUFetch()" style="display:none">Cancel</button>
+    <span class="hint" id="ufetchStatus" style="margin:0"></span>
+  </div>
+  <div class="pbar" id="ufetchBar" style="display:none"><div id="ufetchFill"></div></div>
+</section>
+
+<section>
   <h2>Theme gallery</h2>
   <p class="hint">Every game theme in the local cache. Re-apply one instantly — no API calls, no Topaz credits.
     Applying one pauses auto-theming until you play another game (a “manual hold”).</p>
@@ -608,6 +629,9 @@ async function load() {
   loadState();
   loadGallery();
   refreshLog();
+  // resume the progress bar if an Ultimate Fetch is already running
+  const fa = await api("/api/fetch-all-status");
+  if (fa.running) pollUFetch(); else renderUFetch(fa);
   setInterval(refreshLog, 5000);
 }
 
@@ -802,6 +826,64 @@ async function loadGallery() {
   }
   if (!g.children.length)
     g.textContent = "(no cached themes yet — run the pipeline once)";
+}
+
+// ---- Ultimate Fetch
+let ufetchTimer = null;
+
+async function startUFetch() {
+  if (!confirm("Fetch artwork for your ENTIRE Steam library?\n\n" +
+               "This takes a while (a few seconds per game — a big library can take " +
+               "the better part of an hour) and downloads a few hundred MB. " +
+               "No themes are applied and no Topaz credits are used.\n\nContinue?"))
+    return;
+  const r = await api("/api/fetch-all", {});
+  const st = document.getElementById("ufetchStatus");
+  if (!r.ok) { st.textContent = r.error || "failed to start"; return; }
+  st.textContent = r.detail;
+  pollUFetch();
+  setTimeout(refreshLog, 2000);
+}
+
+async function cancelUFetch() {
+  const r = await api("/api/fetch-all-cancel", {});
+  document.getElementById("ufetchStatus").textContent = r.detail || r.error || "";
+}
+
+function renderUFetch(s) {
+  const bar = document.getElementById("ufetchBar");
+  const fill = document.getElementById("ufetchFill");
+  const st = document.getElementById("ufetchStatus");
+  document.getElementById("ufetchBtn").style.display = s.running ? "none" : "";
+  document.getElementById("ufetchCancel").style.display = s.running ? "" : "none";
+  if (s.running) {
+    bar.style.display = "";
+    const pct = s.total ? Math.round(100 * s.done / s.total) : 0;
+    fill.style.width = pct + "%";
+    st.textContent = s.total
+      ? `${s.done} / ${s.total} (${pct}%) — ${s.current}`
+      : "fetching your library list…";
+  } else if (s.stats || s.error) {
+    bar.style.display = "none";
+    st.textContent = s.error ? "error: " + s.error
+      : `done — ${s.stats.fetched} fetched, ${s.stats.skipped} already cached, ` +
+        `${s.stats.excluded} excluded, ${s.stats.failed} failed` +
+        (s.stats.cancelled ? " (cancelled)" : "");
+  }
+}
+
+async function pollUFetch() {
+  if (ufetchTimer) clearInterval(ufetchTimer);
+  const tick = async () => {
+    const s = await api("/api/fetch-all-status");
+    renderUFetch(s);
+    if (!s.running && ufetchTimer) {
+      clearInterval(ufetchTimer); ufetchTimer = null;
+      loadGallery(); refreshLog();
+    }
+  };
+  await tick();
+  ufetchTimer = setInterval(tick, 2000);
 }
 
 async function refreshLog() {
