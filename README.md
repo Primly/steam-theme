@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.5.2-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.5.3-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -574,7 +574,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 120 tests
+python -m unittest discover -s tests -v   # 122 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -611,6 +611,11 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.5.3** — fix: a manual theme hold no longer dies after a redo button
+  (Regenerate / Full refetch). The forced rerun deliberately ignores the
+  detected game, but the post-run cleanup cleared the hold anyway, so the
+  next poll reverted to the last-played game ~30 s later. Holds now
+  survive redos and still release when you actually play something new.
 - **1.5.2** — extra keys in the VLM's JSON answer are forwarded as Topaz
   prompt placeholders, so custom naming-prompt JSON shapes (e.g. a
   `"genre"` or `"art_style"` key) can steer generative upscaling.

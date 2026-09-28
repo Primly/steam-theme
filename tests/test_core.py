@@ -260,8 +260,28 @@ class TestManualThemeHold(unittest.TestCase):
     def test_forced_rerun_targets_held_theme_not_detected_game(self):
         state = self._check(force=True)
         self.assertEqual([g["appid"] for g in self.pipeline_calls], [440])
-        self.assertNotIn("manual_hold", state)
+        # the hold must SURVIVE the forced rerun — it deliberately ignored
+        # the detected game, so clearing it would let the next poll revert
+        # the theme the user just chose (the redo-buttons revert bug)
+        self.assertEqual(state["manual_hold"]["identity"], "440")
         self.assertEqual(state["last_identity"], "440")
+
+    def test_stale_poll_after_forced_rerun_still_holds(self):
+        self._check(force=True)          # e.g. Full refetch on the held theme
+        self.assertEqual(self.pipeline_calls[-1]["appid"], 440)
+        state = self._check()            # next normal poll, nothing new played
+        self.assertEqual(len(self.pipeline_calls), 1)   # NO revert to Dota 2
+        self.assertEqual(state["manual_hold"]["identity"], "440")
+
+    def test_new_play_after_forced_rerun_releases_hold(self):
+        self._check(force=True)
+        games = [dict(self.GAMES[0]),
+                 dict(self.GAMES[1], rtime_last_played=self.hold_at + 60)]
+        with mock.patch.object(main.steamdetect, "get_owned_games",
+                               lambda k, s: games):
+            state = self._check()
+        self.assertEqual(self.pipeline_calls[-1]["appid"], 570)
+        self.assertNotIn("manual_hold", state)
 
 
 class TestReapplyFromCacheHold(unittest.TestCase):

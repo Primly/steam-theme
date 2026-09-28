@@ -35,7 +35,7 @@ else:
     import linux_theme as theme_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-__version__ = "1.5.2"
+__version__ = "1.5.3"
 
 
 def safe_join(base, *parts):
@@ -567,7 +567,12 @@ def check_once(cfg, log, force=False, appid_override=None, dry_run=False):
 
     result = run_pipeline(cfg, game, log, dry_run=dry_run)
     if result and not dry_run:
-        state.pop("manual_hold", None)  # theming caught up with detection
+        # theming caught up with detection — the hold is moot. EXCEPT for a
+        # manual-hold rerun (redo buttons), which deliberately ignored the
+        # detected game: keep the hold so the next poll doesn't instantly
+        # revert the theme the user just chose to work on.
+        if source != "manual-hold":
+            state.pop("manual_hold", None)
         state.update({"last_key": key, "last_identity": identity,
                       "last_appid": appid, "last_cache_key": cache_key,
                       "last_name": game["name"],
