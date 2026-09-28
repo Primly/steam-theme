@@ -3,6 +3,7 @@
 Run from the repo root:  python -m unittest discover -s tests -v
 """
 
+import glob
 import json
 import os
 import sys
@@ -995,6 +996,285 @@ class TestUpscaleContext(unittest.TestCase):
     def test_runaway_value_capped(self):
         ctx = self._ctx({"essay": "x" * 5000})
         self.assertEqual(len(ctx["essay"]), 200)
+
+
+class TestComfyWorkflow(unittest.TestCase):
+    def test_default_workflow_valid(self):
+        wf, err = upscale.validate_workflow("")
+        self.assertIsNone(err)
+        types = {n["class_type"] for n in wf.values()}
+        self.assertIn("LoadImage", types)
+        self.assertIn("SaveImage", types)
+
+    def test_invalid_json(self):
+        wf, err = upscale.validate_workflow("{not json")
+        self.assertIsNone(wf)
+        self.assertIn("invalid JSON", err)
+
+    def test_missing_required_nodes(self):
+        _, err = upscale.validate_workflow(
+            '{"1": {"class_type": "LoadImage", "inputs": {}}}')
+        self.assertIn("SaveImage", err)
+        _, err = upscale.validate_workflow(
+            '{"1": {"class_type": "SaveImage", "inputs": {}}}')
+        self.assertIn("LoadImage", err)
+
+    def test_fill_workflow_nested_lists_and_scalars(self):
+        wf = {"1": {"inputs": {"text": "{game} — {mood}", "seed": 20},
+                    "class_type": "CLIPTextEncode"},
+              "2": {"inputs": {"images": ["5", 0]}}}  # connection lists untouched
+        out, dropped = upscale.fill_workflow(wf, {"game": "Hades II",
+                                                  "mood": "dark"})
+        self.assertEqual(out["1"]["inputs"]["text"], "Hades II — dark")
+        self.assertEqual(out["1"]["inputs"]["seed"], 20)
+        self.assertEqual(out["2"]["inputs"]["images"], ["5", 0])
+        self.assertEqual(dropped, [])
+        self.assertEqual(wf["1"]["inputs"]["text"], "{game} — {mood}")  # copy
+
+    def test_fill_workflow_quotes_and_newlines_are_safe(self):
+        # substitution happens post-parse, so JSON-hostile values can't
+        # break the workflow structure
+        wf = {"1": {"inputs": {"text": "{mood}"}}}
+        out, _ = upscale.fill_workflow(wf, {"mood": 'dark "gritty"\nmood'})
+        self.assertEqual(out["1"]["inputs"]["text"], 'dark "gritty"\nmood')
+
+    def test_fill_workflow_unknown_dropped(self):
+        wf = {"1": {"inputs": {"text": "{game} {genre}"}}}
+        out, dropped = upscale.fill_workflow(wf, {"game": "X"})
+        self.assertEqual(out["1"]["inputs"]["text"], "X ")
+        self.assertEqual(dropped, ["genre"])
+
+    def test_comfy_slug_stable_and_content_addressed(self):
+        s1 = upscale._comfy_slug({"comfy": {"workflow": ""}})
+        self.assertTrue(s1.startswith("comfy-"))
+        # explicit default text hashes identically to empty (= built-in)
+        s2 = upscale._comfy_slug(
+            {"comfy": {"workflow": upscale.DEFAULT_COMFY_WORKFLOW}})
+        self.assertEqual(s1, s2)
+        s3 = upscale._comfy_slug({"comfy": {"workflow": (
+            '{"1": {"class_type": "LoadImage", "inputs": {}},'
+            ' "2": {"class_type": "SaveImage", "inputs": {}}}')}})
+        self.assertNotEqual(s1, s3)  # editing the workflow re-generates
+
+    def test_comfy_base_validation(self):
+        self.assertEqual(upscale._comfy_base({}), "http://127.0.0.1:8188")
+        self.assertEqual(upscale._comfy_base(
+            {"comfy": {"host": "192.168.1.5", "port": 8189}}),
+            "http://192.168.1.5:8189")
+        with self.assertRaises(ValueError):
+            upscale._comfy_base({"comfy": {"host": "evil.com/x"}})
+        with self.assertRaises(ValueError):
+            upscale._comfy_base({"comfy": {"host": "ok", "port": 99999}})
+
+
+class TestComfySubmit(unittest.TestCase):
+    """The Comfy provider flow against a mocked server: upload -> submit
+    (nodes patched, placeholders filled) -> history poll -> download."""
+
+    def setUp(self):
+        import io
+        from PIL import Image
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(
+            self.dir, ignore_errors=True))
+        self.src = os.path.join(self.dir, "hero_1.jpg")
+        Image.new("RGB", (32, 32), (10, 20, 30)).save(self.src, "JPEG")
+        buf = io.BytesIO()
+        Image.new("RGB", (64, 64), (1, 2, 3)).save(buf, "PNG")
+        self.png_bytes = buf.getvalue()
+        self.dst = os.path.join(self.dir, "hero_1_upscaled_comfy-aaaa1111.png")
+        self.workflow = json.dumps({
+            "1": {"class_type": "LoadImage", "inputs": {"image": "x.jpg"}},
+            "5": {"class_type": "CLIPTextEncode",
+                  "inputs": {"text": "{game} key art, {mood}"}},
+            "9": {"class_type": "SaveImage",
+                  "inputs": {"filename_prefix": "orig"}}})
+        self.cfg = {"cache_dir": self.dir,
+                    "upscaling": {"enabled": True, "provider": "comfy"},
+                    "comfy": {"host": "127.0.0.1", "port": 8188,
+                              "workflow": self.workflow,
+                              "defer_while_gaming": False}}
+        self.submitted = None
+
+    def _resp(self, status=200, payload=None, content=b""):
+        r = mock.Mock()
+        r.status_code = status
+        r.text = payload if isinstance(payload, str) else json.dumps(payload or {})
+        r.json = lambda: payload if isinstance(payload, dict) else {}
+        r.content = content
+        r.headers = {}
+        return r
+
+    def _post(self, url, **kw):
+        if url.endswith("/upload/image"):
+            return self._resp(200, {"name": "u_abc.jpg"})
+        if url.endswith("/prompt"):
+            self.submitted = kw["json"]["prompt"]
+            return self._resp(200, {"prompt_id": "pid-1"})
+        raise AssertionError(url)
+
+    def _get(self, url, **kw):
+        if "/history/" in url:
+            return self._resp(200, {"pid-1": {
+                "status": {"completed": True, "status_str": "success"},
+                "outputs": {"9": {"images": [
+                    {"filename": "steamtheme_x_00001_.png",
+                     "subfolder": "", "type": "output"}]}}}})
+        if url.endswith("/view"):
+            return self._resp(200, content=self.png_bytes)
+        raise AssertionError(url)
+
+    def _run(self):
+        import requests as real_requests
+        with mock.patch.object(upscale, "requests") as rq, \
+                mock.patch.object(upscale.time, "sleep"):
+            rq.post.side_effect = self._post
+            rq.get.side_effect = self._get
+            rq.RequestException = real_requests.RequestException
+            return upscale._comfy(self.src, self.dst, self.cfg, lambda m: None,
+                                  5120, 1440, context={"game": "Hades II",
+                                                       "mood": "dark fantasy"})
+
+    def test_happy_path_patches_nodes_and_fills_placeholders(self):
+        out = self._run()
+        self.assertEqual(out, self.dst)
+        with open(self.dst, "rb") as f:
+            self.assertEqual(f.read(), self.png_bytes)
+        self.assertEqual(self.submitted["1"]["inputs"]["image"], "u_abc.jpg")
+        self.assertTrue(self.submitted["9"]["inputs"]["filename_prefix"]
+                        .startswith("steamtheme_"))
+        self.assertEqual(self.submitted["5"]["inputs"]["text"],
+                         "Hades II key art, dark fantasy")
+
+    def test_submit_http_error(self):
+        def bad_post(url, **kw):
+            if url.endswith("/prompt"):
+                return self._resp(400, payload="bad workflow")
+            return self._post(url, **kw)
+        import requests as real_requests
+        with mock.patch.object(upscale, "requests") as rq, \
+                mock.patch.object(upscale.time, "sleep"):
+            rq.post.side_effect = bad_post
+            rq.RequestException = real_requests.RequestException
+            self.assertIsNone(
+                upscale._comfy(self.src, self.dst, self.cfg, lambda m: None,
+                               5120, 1440, context={}))
+
+    def test_history_error_status(self):
+        def err_get(url, **kw):
+            if "/history/" in url:
+                return self._resp(200, {"pid-1": {
+                    "status": {"status_str": "error", "messages": [
+                        ["execution_error", {"exception_message": "OOM"}]]},
+                    "outputs": {}}})
+            return self._get(url, **kw)
+        import requests as real_requests
+        with mock.patch.object(upscale, "requests") as rq, \
+                mock.patch.object(upscale.time, "sleep"):
+            rq.post.side_effect = self._post
+            rq.get.side_effect = err_get
+            rq.RequestException = real_requests.RequestException
+            self.assertIsNone(
+                upscale._comfy(self.src, self.dst, self.cfg, lambda m: None,
+                               5120, 1440, context={}))
+
+    def test_unreachable(self):
+        import requests as real_requests
+        with mock.patch.object(upscale, "requests") as rq:
+            rq.post.side_effect = real_requests.ConnectionError("nope")
+            rq.RequestException = real_requests.RequestException
+            self.assertIsNone(
+                upscale._comfy(self.src, self.dst, self.cfg, lambda m: None,
+                               5120, 1440, context={}))
+
+
+class TestComfyDefer(unittest.TestCase):
+    """defer_while_gaming: upscales queue while a game runs, drain when idle,
+    dedupe repeat enqueues, drop poison jobs after 3 attempts."""
+
+    def setUp(self):
+        from PIL import Image
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(
+            self.dir, ignore_errors=True))
+        os.makedirs(os.path.join(self.dir, "440"))
+        self.src = os.path.join(self.dir, "440", "hero_1.jpg")
+        Image.new("RGB", (32, 32), (10, 20, 30)).save(self.src, "JPEG")
+        self.cfg = {"cache_dir": self.dir,
+                    "upscaling": {"enabled": True, "provider": "comfy"},
+                    "comfy": {"host": "127.0.0.1", "port": 8188,
+                              "workflow": "", "defer_while_gaming": True}}
+        self.qfile = os.path.join(self.dir, "comfy_queue.json")
+
+    def _queue(self):
+        with open(self.qfile, encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_defers_and_dedupes_while_gaming(self):
+        with mock.patch.object(upscale, "_game_running", return_value=True):
+            out1 = upscale.maybe_upscale(self.src, 5120, 1440, self.cfg,
+                                         lambda m: None,
+                                         context={"game": "X"}, role="hero")
+            out2 = upscale.maybe_upscale(self.src, 5120, 1440, self.cfg,
+                                         lambda m: None,
+                                         context={"game": "X"}, role="hero")
+        self.assertEqual(out1, self.src)   # fallback to the original for now
+        self.assertEqual(out2, self.src)
+        q = self._queue()
+        self.assertEqual(len(q), 1)        # deduped
+        self.assertEqual(q[0]["cache_key"], "440")
+        self.assertEqual(q[0]["context"], {"game": "X"})
+        self.assertIn("_upscaled_comfy-", q[0]["dst"])
+
+    def test_drain_processes_queue_when_idle(self):
+        with mock.patch.object(upscale, "_game_running", return_value=True):
+            upscale.maybe_upscale(self.src, 5120, 1440, self.cfg,
+                                  lambda m: None, context={}, role="hero")
+
+        def fake_comfy(src, dst, cfg, log, w, h, context=None, defer=True):
+            with open(dst, "wb") as f:
+                f.write(b"done")
+            return dst
+
+        with mock.patch.object(upscale, "_game_running", return_value=False), \
+                mock.patch.object(upscale, "_comfy", fake_comfy), \
+                mock.patch.object(upscale, "requests") as rq:
+            rq.get.return_value = mock.Mock(status_code=200)  # system_stats
+            done = upscale.drain_comfy_queue(self.cfg, lambda m: None)
+        self.assertEqual(done, ["440"])
+        self.assertEqual(self._queue(), [])
+        outs = glob.glob(os.path.join(self.dir, "440",
+                                      "*_upscaled_comfy-*.png"))
+        self.assertEqual(len(outs), 1)
+        with open(outs[0], "rb") as f:
+            self.assertEqual(f.read(), b"done")
+
+    def test_drain_skips_while_gaming(self):
+        with mock.patch.object(upscale, "_game_running", return_value=True):
+            upscale.maybe_upscale(self.src, 5120, 1440, self.cfg,
+                                  lambda m: None, context={}, role="hero")
+            done = upscale.drain_comfy_queue(self.cfg, lambda m: None)
+        self.assertEqual(done, [])
+        self.assertEqual(len(self._queue()), 1)  # untouched
+
+    def test_poison_job_dropped_after_three_attempts(self):
+        with mock.patch.object(upscale, "_game_running", return_value=True):
+            upscale.maybe_upscale(self.src, 5120, 1440, self.cfg,
+                                  lambda m: None, context={}, role="hero")
+        with mock.patch.object(upscale, "_game_running", return_value=False), \
+                mock.patch.object(upscale, "_comfy",
+                                  lambda *a, **k: None), \
+                mock.patch.object(upscale, "requests") as rq:
+            rq.get.return_value = mock.Mock(status_code=200)
+            for _ in range(3):
+                done = upscale.drain_comfy_queue(self.cfg, lambda m: None)
+        self.assertEqual(done, [])
+        self.assertEqual(self._queue(), [])  # dropped, not retried forever
+
+    def test_drain_noop_for_other_providers(self):
+        self.cfg["upscaling"]["provider"] = "topaz"
+        self.assertEqual(upscale.drain_comfy_queue(self.cfg, lambda m: None),
+                         [])
 
 
 class TestConfigLoading(unittest.TestCase):

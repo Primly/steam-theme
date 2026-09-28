@@ -13,6 +13,8 @@ API:
   POST /api/test/sgdb           {steamgriddb_api_key}
   POST /api/test/ai             {base_url, api_key, model}   (OpenAI-compatible)
   POST /api/test/topaz          {api_key}                    (auth check, no credits)
+  POST /api/test/comfy          {host, port, workflow}       (connectivity + JSON, no GPU work)
+  GET  /api/comfy-default-workflow   built-in default workflow (UI guide text)
   POST /api/run-now             run the pipeline once in a background thread
   GET  /api/art?key&role&i      cached art; role=hero&i=N serves candidate N
   POST /api/hero-choice         {key, index} pick a hero candidate + regenerate
@@ -163,7 +165,50 @@ def test_topaz(body):
                       "no image was processed, no credits used)"}
 
 
-TESTS = {"steam": test_steam, "sgdb": test_sgdb, "ai": test_ai, "topaz": test_topaz}
+def test_comfy(body):
+    """ComfyUI connectivity + workflow validation. No GPU work is submitted —
+    GET /system_stats for reachability, then a structural check of the
+    Export-API JSON (must contain LoadImage + SaveImage nodes)."""
+    import re as _re
+    host = str(body.get("host") or "127.0.0.1").strip()
+    if not _re.fullmatch(r"[A-Za-z0-9.\-]+", host):
+        return {"ok": False, "error": f"bad host {host!r}"}
+    raw_port = body.get("port")
+    try:
+        port = int(raw_port) if raw_port not in (None, "") else 8188
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "bad port"}
+    if not 1 <= port <= 65535:
+        return {"ok": False, "error": "bad port"}
+    base = f"http://{host}:{port}"
+    t = time.time()
+    try:
+        r = requests.get(base + "/system_stats", timeout=8)
+    except requests.RequestException as e:
+        return {"ok": False, "error": f"unreachable: {e}"}
+    if r.status_code != 200:
+        return {"ok": False,
+                "error": f"HTTP {r.status_code} from /system_stats"}
+    ms = round((time.time() - t) * 1000)
+    gpu = ""
+    try:
+        devs = r.json().get("devices") or []
+        if devs:
+            gpu = devs[0].get("name", "")
+    except ValueError:
+        pass
+    import upscale as _up
+    _, werr = _up.validate_workflow(body.get("workflow") or "")
+    if werr:
+        return {"ok": False, "error":
+                f"connected ({gpu or 'ComfyUI up'}) but workflow: {werr}"}
+    return {"ok": True, "latency_ms": ms,
+            "detail": f"connected — {gpu or 'ComfyUI is up'}; workflow OK "
+                      "(LoadImage + SaveImage found)"}
+
+
+TESTS = {"steam": test_steam, "sgdb": test_sgdb, "ai": test_ai,
+         "topaz": test_topaz, "comfy": test_comfy}
 
 # Ultimate Fetch progress (single worker at a time; written by its thread,
 # read by the status endpoint — plain dict swaps are GIL-atomic enough here)
@@ -326,6 +371,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"ok": True, "themes": _gallery()})
         elif path == "/api/fetch-all-status":
             self._send(200, dict(FETCH_ALL))
+        elif path == "/api/comfy-default-workflow":
+            import upscale as _up
+            self._send(200, {"ok": True, "workflow": _up.DEFAULT_COMFY_WORKFLOW})
         elif path == "/api/fetch-all-upscale-estimate":
             import main as app
             try:

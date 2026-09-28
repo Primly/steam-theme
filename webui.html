@@ -261,17 +261,19 @@
 
 <section>
   <h2>Upscaling</h2>
-  <p class="hint">When artwork is smaller than its target monitor, upscale it. Topaz Gigapixel (cloud, per-image credits) or any OpenAI-compatible images endpoint.</p>
+  <p class="hint">When artwork is smaller than its target monitor, upscale it. Topaz Gigapixel (cloud, per-image credits), a local ComfyUI workflow (your GPU, free), or any OpenAI-compatible images endpoint.</p>
   <div class="row">
     <div class="switch"><input type="checkbox" id="upEnabled"><span>Upscale undersized artwork</span></div>
   </div>
   <div class="row">
     <label for="upProvider">Provider</label>
-    <select id="upProvider">
+    <select id="upProvider" onchange="providerChanged()">
       <option value="topaz">Topaz Gigapixel API</option>
+      <option value="comfy">ComfyUI (local — Export API workflow)</option>
       <option value="ai">OpenAI-compatible endpoint (from AI section)</option>
     </select>
   </div>
+  <div id="topazBlock">
   <div class="sub">Topaz Gigapixel</div>
   <div class="row">
     <label for="topazKey">API key</label>
@@ -318,6 +320,44 @@
   <div class="row"><label for="mHero">Hero</label><select id="mHero"></select></div>
   <div class="row"><label for="mLogo">Logo</label><select id="mLogo"></select></div>
   <div class="row"><label for="mIcon">Icon</label><select id="mIcon"></select></div>
+  </div>
+  <div id="comfyBlock" style="display:none">
+  <div class="sub">ComfyUI (local)</div>
+  <p class="hint">Upscale on your own GPU with a ComfyUI workflow — no cloud, no credits.
+    In Comfy Desktop: enable <b>Dev Mode</b> (Settings → Dev Mode), then <b>Export API</b>
+    on your upscale workflow and paste the JSON below. Empty = the built-in
+    Ultimate SD Upscale default.</p>
+  <div class="row">
+    <label for="comfyHost">Host</label>
+    <input id="comfyHost" placeholder="127.0.0.1">
+    <label for="comfyPort" style="min-width:0">port</label>
+    <input id="comfyPort" type="number" min="1" max="65535" placeholder="8188" style="width:90px">
+    <button onclick="runTest('comfy', {host: v('comfyHost'), port: v('comfyPort'), workflow: v('comfyWorkflow')}, 'comfyResult')">Test</button>
+    <div class="result" id="comfyResult"></div>
+  </div>
+  <div class="row">
+    <label for="comfyWorkflow" class="top">Workflow (Export API JSON)</label>
+    <textarea id="comfyWorkflow" rows="10" spellcheck="false"></textarea>
+  </div>
+  <div class="row">
+    <button onclick="setV('comfyWorkflow', COMFY_DEFAULT_WORKFLOW)">Reset to default workflow</button>
+  </div>
+  <p class="hint">Placeholders are filled into every string in the workflow (e.g. the positive
+    prompt node): <code>{game}</code>, <code>{mood}</code>, <code>{theme_name}</code>,
+    <code>{appearance}</code>, <code>{palette_mode}</code>, plus any extra keys from your
+    naming prompt's JSON shape. The LoadImage and SaveImage nodes are wired automatically
+    per image.</p>
+  <div class="row">
+    <div class="switch"><input type="checkbox" id="comfyDefer"><span>While a game is running, queue upscales and run them when you stop playing</span></div>
+  </div>
+  <p class="hint">Keeps the GPU free for the game. Queued upscales drain automatically when no
+    game is detected, and if they belong to the theme on screen it's re-applied with the
+    crisp versions.</p>
+  <div class="row">
+    <label for="comfyTimeout">Per-image timeout (seconds)</label>
+    <input id="comfyTimeout" type="number" min="60" max="7200" step="30">
+  </div>
+  </div>
 </section>
 
 <section>
@@ -435,6 +475,15 @@ let PLATFORM = "win32";
 
 // Keep in sync with DEFAULT_NAMING_PROMPT in palette.py
 const AI_DEFAULT_PROMPT = `This is key art from the game '{game}'. Its dominant colors are {colors}. Describe the mood and give this desktop theme a short, evocative name. Respond with ONLY a JSON object: {"theme_name": "<short evocative name>", "mood": "<e.g. dark fantasy, neon cyberpunk, cozy pixel>", "appearance": "dark"|"light", "palette_mode": "material"|"muted"|"colorful"}`;
+
+// Fetched from the server (upscale.DEFAULT_COMFY_WORKFLOW) — single source of truth
+let COMFY_DEFAULT_WORKFLOW = "";
+
+function providerChanged() {
+  const p = v("upProvider");
+  document.getElementById("topazBlock").style.display = p === "topaz" ? "" : "none";
+  document.getElementById("comfyBlock").style.display = p === "comfy" ? "" : "none";
+}
 
 function applyPlatform(p) {
   const win = p === "win32";
@@ -627,6 +676,13 @@ async function load() {
   setV("topazCreativity", (cfg.topaz || {}).creativity ?? 3); setV("topazPrompt", (cfg.topaz || {}).prompt);
   const tmodels = (cfg.topaz || {}).models || {};
   fillRoleSelect("mHero", tmodels.hero); fillRoleSelect("mLogo", tmodels.logo); fillRoleSelect("mIcon", tmodels.icon);
+  const cm = cfg.comfy || {};
+  COMFY_DEFAULT_WORKFLOW = (await api("/api/comfy-default-workflow")).workflow || "";
+  setV("comfyHost", cm.host || "127.0.0.1"); setV("comfyPort", cm.port ?? 8188);
+  setV("comfyWorkflow", cm.workflow || COMFY_DEFAULT_WORKFLOW);
+  setC("comfyDefer", cm.defer_while_gaming !== false);
+  setV("comfyTimeout", cm.timeout_seconds ?? 900);
+  providerChanged();
   const wt = cfg.windows_terminal || {};
   setC("wtEnabled", wt.enabled); setC("wtBg", wt.set_background_image); setV("wtOpacity", wt.background_opacity ?? 0.25);
   const sg = cfg.signalrgb || {};
@@ -685,6 +741,12 @@ async function save(apply) {
   cfg.topaz = {api_key: v("topazKey"), model: v("topazModel"),
                creativity: parseInt(v("topazCreativity")) || 3, prompt: v("topazPrompt"),
                models: tmodels};
+  const cw = v("comfyWorkflow");
+  cfg.comfy = {host: v("comfyHost") || "127.0.0.1",
+               port: Math.min(65535, Math.max(1, parseInt(v("comfyPort")) || 8188)),
+               defer_while_gaming: document.getElementById("comfyDefer").checked,
+               timeout_seconds: Math.min(7200, Math.max(60, parseInt(v("comfyTimeout")) || 900))};
+  if (cw && cw !== COMFY_DEFAULT_WORKFLOW) cfg.comfy.workflow = cw;  // default/empty = built-in
   if (PLATFORM === "win32") {
     cfg.windows_terminal = {enabled: document.getElementById("wtEnabled").checked,
       set_background_image: document.getElementById("wtBg").checked,

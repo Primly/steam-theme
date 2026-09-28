@@ -207,5 +207,82 @@ class TestFetchAllEndpoints(ServerFixture):
         self.assertEqual(data["games"], 2)
 
 
+class TestComfyEndpoint(ServerFixture):
+    def _post(self, body):
+        r = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/test/comfy",
+            method="POST", data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(r, timeout=5) as resp:
+            return json.loads(resp.read())
+
+    def test_bad_host_rejected_before_any_network(self):
+        # no mocking: the host regex must reject this before requests is used
+        data = self._post({"host": "evil.com/x", "port": 8188})
+        self.assertFalse(data["ok"])
+        self.assertIn("bad host", data["error"])
+
+    def test_bad_port_rejected(self):
+        for bad in ("nope", 0, 70000):
+            data = self._post({"host": "127.0.0.1", "port": bad})
+            self.assertFalse(data["ok"])
+            self.assertIn("bad port", data["error"])
+
+    def test_unreachable_server(self):
+        import requests
+        with mock.patch.object(
+                webui.requests, "get",
+                side_effect=requests.RequestException("nope")):
+            data = self._post({"host": "127.0.0.1", "port": 8188})
+        self.assertFalse(data["ok"])
+        self.assertIn("unreachable", data["error"])
+
+    def test_non_200_system_stats(self):
+        with mock.patch.object(webui.requests, "get") as g:
+            g.return_value = mock.Mock(status_code=500)
+            data = self._post({"host": "127.0.0.1", "port": 8188})
+        self.assertFalse(data["ok"])
+        self.assertIn("500", data["error"])
+
+    def test_success_reports_gpu_and_default_workflow_ok(self):
+        with mock.patch.object(webui.requests, "get") as g:
+            r = mock.Mock(status_code=200)
+            r.json = lambda: {"devices": [{"name": "NVIDIA RTX 4090"}]}
+            g.return_value = r
+            data = self._post({"host": "127.0.0.1", "port": 8188,
+                               "workflow": ""})  # empty = built-in default
+        self.assertTrue(data["ok"], data)
+        self.assertIn("NVIDIA RTX 4090", data["detail"])
+
+    def test_connected_but_workflow_json_broken(self):
+        with mock.patch.object(webui.requests, "get") as g:
+            r = mock.Mock(status_code=200)
+            r.json = lambda: {"devices": []}
+            g.return_value = r
+            data = self._post({"host": "127.0.0.1", "port": 8188,
+                               "workflow": "{bad json"})
+        self.assertFalse(data["ok"])
+        self.assertIn("workflow", data["error"])
+
+    def test_connected_but_workflow_missing_required_nodes(self):
+        with mock.patch.object(webui.requests, "get") as g:
+            r = mock.Mock(status_code=200)
+            r.json = lambda: {"devices": []}
+            g.return_value = r
+            data = self._post({"host": "127.0.0.1", "port": 8188,
+                               "workflow": '{"1": {"class_type": "KSampler"}}'})
+        self.assertFalse(data["ok"])
+        self.assertIn("workflow", data["error"])
+
+    def test_default_workflow_served_over_http(self):
+        r = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/comfy-default-workflow")
+        with urllib.request.urlopen(r, timeout=5) as resp:
+            data = json.loads(resp.read())
+        self.assertTrue(data["ok"])
+        self.assertIn("LoadImage", data["workflow"])
+        self.assertIn("SaveImage", data["workflow"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -35,7 +35,7 @@ else:
     import linux_theme as theme_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-__version__ = "1.6.0"
+__version__ = "1.7.0"
 
 
 def safe_join(base, *parts):
@@ -756,6 +756,22 @@ def main():
         cfg = load_config()  # live-reload so the web UI applies without restart
         interval = cfg.get("poll_interval_seconds", 30)
         try:
+            # deferred Comfy upscales drain once the GPU is free; if they
+            # belong to the theme on screen right now, re-apply it so the
+            # crisp art replaces the fallback originals
+            done = upscale.drain_comfy_queue(cfg, log)
+            if done:
+                st = load_state(cfg)
+                hold = st.get("manual_hold")
+                current = (str(hold.get("identity"))
+                           if isinstance(hold, dict) and hold.get("identity")
+                           else str(st.get("last_cache_key") or ""))
+                if current and current in done:
+                    log("comfy queue: re-theming the current game with its "
+                        "fresh upscales")
+                    check_once(cfg, log, force=True)
+                    time.sleep(interval)
+                    continue
             check_once(cfg, log)
         except Exception as e:
             log(f"poll error: {e}")

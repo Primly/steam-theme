@@ -44,6 +44,13 @@
     "creativity": 3,
     "prompt": ""
   },
+  "comfy": {
+    "host": "127.0.0.1",
+    "port": 8188,
+    "workflow": "",
+    "defer_while_gaming": true,
+    "timeout_seconds": 900
+  },
 
   "signalrgb": {
     "enabled": false,

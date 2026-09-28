@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.6.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.7.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -277,7 +277,7 @@ the hero, so wordmarks stay crisp instead of being zoomed and cropped.
 | **Steam** | API key, auto-detected SteamID64, live test |
 | **Artwork sources** | SteamGridDB / wallhaven keys, live test |
 | **AI / VLM** | OpenAI-compatible endpoint, presets, model dropdown, live test |
-| **Upscaling** | Topaz key, model picker (Precision/Generative), per-role models, creativity, prompt |
+| **Upscaling** | provider (Topaz / AI images / ComfyUI), Topaz key + model picker (Precision/Generative), per-role models, creativity, prompt; ComfyUI host/port, Export-API workflow JSON, defer-while-gaming |
 | **Extras** | Windows Terminal (Windows) / Konsole (Linux), SignalRGB (Windows) / OpenRGB (Linux) |
 | **Monitors** | detected displays → role mapping |
 | **Ultimate Fetch** | pre-cache artwork for the whole Steam library, with progress + cancel; optional Topaz upscaling with a credit estimate |
@@ -427,6 +427,38 @@ Results are cached per model — a cached upscale is never re-billed. The
 *Full refetch* button in the UI deletes the current game's cached art and
 upscales (re-generates) them, which **does** spend credits. Alternatively,
 `provider: "ai"` uses an OpenAI-compatible images endpoint, best-effort.
+
+### ComfyUI (local, free)
+
+Prefer spending GPU cycles over credits? Set the upscaling provider to
+**ComfyUI** and point it at a local [ComfyUI](https://www.comfy.org/)
+install:
+
+1. In ComfyUI Desktop: **Settings → Dev Mode → Export API** — this copies
+   your workflow as API JSON.
+2. Paste that JSON into the **ComfyUI workflow** field in the config UI
+   (or leave it empty to use the built-in default: *Ultimate SD Upscale*
+   with SDXL + 4x-UltraSharp — install those models in ComfyUI first).
+3. Set the **host/port** (default `127.0.0.1:8188`) and hit **Test** — it
+   checks connectivity and that the workflow has the required `LoadImage` /
+   `SaveImage` nodes, **without submitting any GPU work**.
+
+Details:
+
+- **Placeholders work inside the workflow JSON.** Any string value may use
+  `{game}`, `{mood}`, `{theme_name}`, `{appearance}`, `{palette_mode}`
+  (plus custom keys from your AI naming prompt) — they're filled in per
+  game after the JSON is parsed, so VLM text can never corrupt the
+  workflow. Unknown placeholders are dropped and logged.
+- The `LoadImage` input and `SaveImage` filename prefix are wired
+  automatically per job; everything else in the workflow is yours to tweak.
+- **Defer while gaming** (on by default): while a game is running, upscale
+  jobs are queued instead of competing with it for the GPU. The queue
+  drains when you're idle, and if the current theme's art finishes
+  upscaling it's re-applied automatically with the crisp version.
+- **Per-image timeout** bounds how long one job may run (default 15 min).
+- The cache is keyed by a hash of the workflow — **editing the workflow
+  re-generates** upscales; old caches simply go unused.
 
 ## 🌈 RGB lighting
 
@@ -586,7 +618,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 135 tests
+python -m unittest discover -s tests -v   # 160 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -623,6 +655,15 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.7.0** — **ComfyUI upscaling provider**: upscale artwork on your own
+  GPU with any local ComfyUI workflow (paste the Export-API JSON; the
+  built-in default is Ultimate SD Upscale). VLM placeholders
+  (`{game}`, `{mood}`, …) are filled into workflow strings per game —
+  JSON-safely, after parsing. *Defer while gaming* queues jobs so upscales
+  never fight your game for the GPU; the queue drains when idle and the
+  current theme re-applies itself with the crisp art. Test button validates
+  connectivity + workflow structure without GPU work. Workflow edits change
+  a content-hash cache key, so tweaking the workflow regenerates upscales.
 - **1.6.0** — **Ultimate Fetch can upscale**: opt-in checkbox (or
   `--fetch-all --upscale`) runs the same credit-safe upscale pass a theme
   application does, per game — with a pre-flight estimate of pending images
