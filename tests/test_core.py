@@ -759,6 +759,63 @@ class TestNamingPrompt(unittest.TestCase):
         self.assertTrue(out.startswith("This is key art from the game"))
 
 
+class TestUpscaleContext(unittest.TestCase):
+    """Extra keys in the VLM's JSON answer are forwarded as Topaz prompt
+    placeholders, so a custom naming-prompt JSON shape (e.g. a "genre" key)
+    becomes usable in the Topaz prompt template."""
+
+    PAL = {"appearance": "dark"}
+
+    def _ctx(self, ai):
+        return main._upscale_context("Hades II", self.PAL, ai,
+                                     {"palette_mode": "colorful"})
+
+    def test_fixed_five_present_without_ai(self):
+        ctx = self._ctx(None)
+        self.assertEqual(ctx, {"game": "Hades II", "mood": "",
+                               "theme_name": "Hades II — Steam Theme",
+                               "appearance": "dark",
+                               "palette_mode": "colorful"})
+
+    def test_custom_keys_forwarded_and_fillable(self):
+        ai = {"theme_name": "Ashen Vigil", "mood": "dark fantasy",
+              "genre": "roguelike", "player_count": 1, "coop": False,
+              "tags": ["action", "mythology"]}
+        ctx = self._ctx(ai)
+        self.assertEqual(ctx["genre"], "roguelike")
+        self.assertEqual(ctx["player_count"], "1")
+        self.assertEqual(ctx["coop"], "false")
+        self.assertEqual(ctx["tags"], "action, mythology")
+        out, dropped = upscale.fill_prompt(
+            "{game} ({genre}) — {tags} — coop: {coop}", ctx)
+        self.assertEqual(out,
+                         "Hades II (roguelike) — action, mythology — coop: false")
+        self.assertEqual(dropped, [])
+
+    def test_fixed_keys_not_overwritten(self):
+        # effective values win over raw VLM duplicates (appearance may be a
+        # post-override value; theme_name/palette_mode carry fallbacks)
+        ai = {"appearance": "light", "palette_mode": "muted",
+              "game": "SPOOFED", "theme_name": "Ashen Vigil"}
+        ctx = self._ctx(ai)
+        self.assertEqual(ctx["appearance"], "dark")     # pal's effective value
+        self.assertEqual(ctx["palette_mode"], "muted")  # ai beats cfg default
+        self.assertEqual(ctx["game"], "Hades II")       # never spoofable
+        self.assertEqual(ctx["theme_name"], "Ashen Vigil")
+
+    def test_unplaceholdable_values_and_keys_skipped(self):
+        ai = {"nested": {"x": 1}, "nothing": None, "bool_list": [True],
+              "bad key!": "x", "9lives": "x", "ok_key": "fine"}
+        ctx = self._ctx(ai)
+        for bad in ("nested", "nothing", "bool_list", "bad key!", "9lives"):
+            self.assertNotIn(bad, ctx)
+        self.assertEqual(ctx["ok_key"], "fine")
+
+    def test_runaway_value_capped(self):
+        ctx = self._ctx({"essay": "x" * 5000})
+        self.assertEqual(len(ctx["essay"]), 200)
+
+
 class TestConfigLoading(unittest.TestCase):
     def test_example_config_is_valid_and_placeholder_blanked(self):
         # simulate a fresh checkout: no config.json next to the code? there is

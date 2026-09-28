@@ -39,9 +39,11 @@ def fill_prompt(template, context):
     """Substitute {placeholders} from context into a Topaz prompt template.
 
     Available keys: {game} plus the VLM's JSON values ({mood}, {theme_name},
-    {appearance}, {palette_mode}). Unknown placeholders are dropped (never
-    raise on a hand-typed template) and reported, so a typo can't fail the
-    pipeline. Returns (filled_text, dropped_keys).
+    {appearance}, {palette_mode}) — and any extra keys the user's custom
+    naming prompt asked the VLM for (forwarded by main._upscale_context).
+    Unknown placeholders are dropped (never raise on a hand-typed template)
+    and reported, so a typo can't fail the pipeline.
+    Returns (filled_text, dropped_keys).
     """
     dropped = []
 

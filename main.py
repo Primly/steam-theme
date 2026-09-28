@@ -35,7 +35,7 @@ else:
     import linux_theme as theme_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-__version__ = "1.5.1"
+__version__ = "1.5.2"
 
 
 def safe_join(base, *parts):
@@ -119,6 +119,43 @@ def _hero_settings(cfg):
             "shuffle": bool(h.get("shuffle"))}
 
 
+def _upscale_context(name, pal, ai, cfg):
+    """Prompt context for generative upscalers: {game} plus the VLM's JSON
+    values ({mood}, {theme_name}, {appearance}, {palette_mode}).
+
+    Extra keys a user adds to their naming prompt's JSON shape are forwarded
+    too, so any custom key becomes a usable {placeholder}: strings pass
+    through, bools/numbers stringify, scalar lists comma-join; nested
+    objects, nulls and unplaceholdable key names are skipped. The fixed five
+    keys always win — they hold the EFFECTIVE post-override values.
+    """
+    ctx = {"game": name,
+           "mood": (ai or {}).get("mood") or "",
+           "theme_name": (ai or {}).get("theme_name")
+                         or f"{name} — Steam Theme",
+           "appearance": pal.get("appearance", "dark"),
+           "palette_mode": (ai or {}).get("palette_mode")
+                           or cfg.get("palette_mode", "colorful")}
+    for k, v in (ai or {}).items():
+        k = str(k)
+        if k in ctx or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
+            continue
+        if isinstance(v, bool):
+            ctx[k] = "true" if v else "false"
+        elif isinstance(v, (int, float)):
+            ctx[k] = str(v)
+        elif isinstance(v, str):
+            ctx[k] = v
+        elif (isinstance(v, (list, tuple))
+              and all(isinstance(x, (str, int, float))
+                      and not isinstance(x, bool) for x in v)):
+            ctx[k] = ", ".join(str(x) for x in v)
+        # nested objects / null / anything else: not prompt material
+        if k in ctx:
+            ctx[k] = ctx[k][:200]  # one runaway value can't eat the prompt
+    return ctx
+
+
 def run_pipeline(cfg, game, log, dry_run=False):
     appid, name = game.get("appid"), game["name"]
     # custom (non-Steam) games may have no appid; cache under a stable key
@@ -159,12 +196,10 @@ def run_pipeline(cfg, game, log, dry_run=False):
     theme_name = (ai or {}).get("theme_name") or f"{name} — Steam Theme"
     mood = (ai or {}).get("mood", "")
 
-    # upscale after VLM naming so its JSON values (mood, theme_name, …) can
-    # steer generative Topaz models via prompt placeholders
-    up_ctx = {"game": name, "mood": mood, "theme_name": theme_name,
-              "appearance": pal["appearance"],
-              "palette_mode": (ai or {}).get("palette_mode")
-                              or cfg.get("palette_mode", "colorful")}
+    # upscale after VLM naming so its JSON values (mood, theme_name, plus
+    # any custom keys the user's naming prompt asks for) can steer
+    # generative Topaz models via prompt placeholders
+    up_ctx = _upscale_context(name, pal, ai, cfg)
     hero_set = _hero_settings(cfg)
     candidates = [c for c in (art.get("hero_candidates") or [])
                   if isinstance(c, str)]

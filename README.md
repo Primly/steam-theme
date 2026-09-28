@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.5.1-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.5.2-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -406,8 +406,10 @@ spending any):
   Realism`, `Recovery V2`, `Standard MAX`) — creative re-interpretation,
   ~1 credit per 2 MP. Steerable with a **creativity** slider and a prompt
   template whose placeholders are filled per game: `{game}`, plus the VLM's
-  JSON values `{mood}`, `{theme_name}`, `{appearance}`, `{palette_mode}`
-  (unknown placeholders are ignored, never an error).
+  JSON values `{mood}`, `{theme_name}`, `{appearance}`, `{palette_mode}`.
+  Any extra keys you add to the AI naming prompt's JSON shape become
+  placeholders too (a `"genre"` key becomes `{genre}`). Unknown
+  placeholders are ignored, never an error.
 - **Per-role models**: e.g. Bloom 2 for heroes, Text Refine for logos/icons.
 
 Results are cached per model — a cached upscale is never re-billed. The
@@ -572,7 +574,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 115 tests
+python -m unittest discover -s tests -v   # 120 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -609,6 +611,11 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.5.2** — extra keys in the VLM's JSON answer are forwarded as Topaz
+  prompt placeholders, so custom naming-prompt JSON shapes (e.g. a
+  `"genre"` or `"art_style"` key) can steer generative upscaling.
+  Strings pass through, numbers/booleans stringify, scalar lists
+  comma-join; the five fixed placeholders keep their effective values.
 - **1.5.1** — generative Topaz prompts accept the VLM's JSON values as
   placeholders: `{mood}`, `{theme_name}`, `{appearance}`, `{palette_mode}`
   alongside `{game}`. Unknown placeholders are dropped and logged instead of
