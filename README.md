@@ -15,6 +15,10 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 
 ---
 
+**Jump to:** [What it does](#-what-it-does) · [Install — Windows](#-installation--windows) · [Install — Linux](#-installation--linux-bazzite--other-kde-distros) · [How it works](#-how-it-works) · [Configuration](#️-configuration) · [AI naming](#-ai--vlm-theme-naming) · [Upscaling](#-upscaling) ([Topaz](#topaz-gigapixel-cloud-paid) · [ComfyUI](#comfyui-local-free)) · [RGB lighting](#-rgb-lighting) · [Ultimate Fetch](#-ultimate-fetch) · [Troubleshooting](#-troubleshooting) · [Changelog](#-changelog)
+
+---
+
 ## ✨ What it does
 
 - **Detects** what you played — a Steam game running *right now*, your
@@ -28,6 +32,10 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
   dark/light decision from the artwork itself.
 - **Names the theme** with an AI/VLM of your choice (local LM Studio/Ollama
   model or any cloud endpoint) — e.g. *“Autumn Tempest”* for Ghost of Tsushima.
+- **Upscales (optional)** — when art is smaller than the monitor it must
+  fill, it's enlarged with [Topaz Gigapixel](https://www.topazlabs.com/)
+  or, **free**, on your own GPU through [ComfyUI](https://www.comfy.org/).
+  Results are cached, so each image is only ever processed once.
 - **Applies it everywhere:**
   - per-monitor wallpapers (hero on the big screen, logo & icon on the others)
   - system accent color + dark/light mode
@@ -61,7 +69,9 @@ Troubleshooting section near the end covers the few platform quirks.
     <https://www.steamgriddb.com/profile/preferences/api>
   - an **OpenAI-compatible VLM** (LM Studio, Ollama, OpenRouter, …) for theme
     naming — or skip it and get generated names
-  - a **Topaz Gigapixel** API key (paid, per-image credits) for upscaling
+  - **upscaling**: a **Topaz Gigapixel** API key (paid, per-image
+    credits) — or skip the credits entirely with a local
+    [ComfyUI](https://www.comfy.org/) install (your GPU, free)
   - **SignalRGB Pro** (Windows) or **OpenRGB** (Linux) for lighting
 
 No git or programming knowledge is required — the install below is
@@ -238,7 +248,7 @@ detect ──▶ fetch art ──▶ palette ──▶ (AI naming) ──▶ (up
    → wallhaven search. Downloaded once per game, cached in `cache/`.
    Every download is **normalized to a real JPEG or PNG with a matching
    extension** (sources sometimes serve ICO/WebP files or PNGs at `.jpg`
-   names) so the Topaz API never rejects them. Heroes come in multiples
+   names) so upscaler APIs never reject them. Heroes come in multiples
    (`hero.count`, default 6) — see
    [Hero artwork](#️-hero-artwork-pick-or-rotate).
 3. **Palette** — 16-color median cut (Colorful / Material / Muted styles),
@@ -248,7 +258,10 @@ detect ──▶ fetch art ──▶ palette ──▶ (AI naming) ──▶ (up
    theme and describes its mood; the mood also steers generative upscaling.
    Failed/skipped naming falls back to `"<Game> — Steam Theme"`.
 5. **Upscaling (optional)** — art smaller than its target monitor is
-   upscaled via Topaz Gigapixel (details in the upscaling section below).
+   enlarged by the configured provider: **Topaz Gigapixel** (cloud,
+   per-image credits), a local **ComfyUI** workflow (your GPU, free — jobs
+   can queue while you game), or an OpenAI-compatible images endpoint
+   (best-effort). Details in the [upscaling section](#-upscaling).
 6. **Compose + apply** — Windows: one span-style image across all monitors,
    accent/dark-mode registry keys, and a generated `.theme` applied exactly
    as if you double-clicked it. Linux: per-screen exact-sized tiles pushed
@@ -280,7 +293,7 @@ the hero, so wordmarks stay crisp instead of being zoomed and cropped.
 | **Upscaling** | provider (Topaz / AI images / ComfyUI), Topaz key + model picker (Precision/Generative), per-role models, creativity, prompt; ComfyUI host/port, Export-API workflow JSON + per-role workflow overrides, defer-while-gaming |
 | **Extras** | Windows Terminal (Windows) / Konsole (Linux), SignalRGB (Windows) / OpenRGB (Linux) |
 | **Monitors** | detected displays → role mapping |
-| **Ultimate Fetch** | pre-cache artwork for the whole Steam library, with progress + cancel; optional Topaz upscaling with a credit estimate |
+| **Ultimate Fetch** | pre-cache artwork for the whole Steam library, with progress + cancel; optional upscaling (Topaz credits with an estimate, or free ComfyUI GPU time) |
 | **Theme gallery** | thumbnails of every cached theme; re-apply instantly |
 | **Activity log** | live tail of what the service is doing |
 
@@ -306,8 +319,10 @@ UI takes effect without restarts.
 | `hero.count` / `mode` / `interval_minutes` / `shuffle` | `6` / `"pick"` / `30` / `false` | Hero candidates per game; `pick` one in the gallery or `rotate` as a slideshow |
 | `ai.enabled` / `base_url` / `api_key` / `model` | `false` | OpenAI-compatible VLM for theme naming |
 | `ai.prompt` | built-in | Custom naming prompt; `{game}`/`{colors}` placeholders |
-| `upscaling.enabled` / `provider` | `false` | `topaz` or `ai` (OpenAI images endpoint) |
+| `upscaling.enabled` / `provider` | `false` | `topaz` (cloud, credits), `comfy` (local ComfyUI, free), or `ai` (OpenAI images endpoint) |
 | `topaz.api_key` / `model` / `creativity` / `prompt` / `models` | — | Topaz settings; `models.hero/logo/icon` override per role |
+| `comfy.host` / `port` / `workflow` / `workflows` / `defer_while_gaming` / `timeout_seconds` | `127.0.0.1` / `8188` / built-in / — / `true` / `900` | Local ComfyUI upscaling; `workflow` = Export-API JSON (empty = built-in Ultimate SD Upscale default); `workflows.hero/logo/icon` override per role; jobs defer to a queue while a game runs |
+| `ai.upscale_model` | `ai.model` | Model for the `ai` images provider |
 | `signalrgb.*` (Windows) | — | `enabled`, `base_url`, `custom_effect`, `effect_style`, `effect_scope` (`per_game`/`single`), `effects_dir`, `fallback_effect` |
 | `windows_terminal.*` (Windows) | — | `enabled`, `set_background_image`, `background_opacity` |
 | `konsole.*` (Linux) | — | `enabled`, `set_default_profile` |
@@ -372,12 +387,14 @@ What to expect:
 - **Optional upscaling** — tick *Also upscale fetched art* (or
   `--fetch-all --upscale`) and each game also gets the same upscale pass a
   theme application would do: pick mode upscales the active hero + logo +
-  icon, rotate mode upscales **every** hero candidate. This **spends Topaz
-  credits** — ticking the checkbox shows a live estimate of how many cached
-  images are pending, and the confirm dialog warns you again. If AI naming
-  is enabled the VLM runs per game too, so generative prompt placeholders
-  (`{mood}` and friends) are filled properly. Results are cached per model,
-  so it only ever pays for new work.
+  icon, rotate mode upscales **every** hero candidate. Cost follows your
+  provider: **Topaz spends credits** (the checkbox shows a live estimate of
+  pending images and the confirm dialog warns you again), while **ComfyUI
+  spends GPU time instead** — hours on a big library, and *defer while
+  gaming* still applies: if you play mid-fetch, queued jobs wait until
+  you're done. If AI naming is enabled the VLM runs per game too, so
+  generative prompt placeholders (`{mood}` and friends) are filled properly.
+  Results are cached per model, so it only ever pays for new work.
 - **Resumable** — games whose cache is already complete are skipped without
   any network calls, and upscales that already exist are never re-billed, so
   cancelling and re-running picks up where it left off. Excluded app IDs are
@@ -390,11 +407,12 @@ extra credits.
 ## 🎨 AI / VLM theme naming
 
 Point the AI section at any OpenAI-compatible chat endpoint — local (LM
-Studio, Ollama, vLLM) or cloud (OpenRouter, etc.). The model sees the hero
-art and returns a theme name, a mood description, and (in auto mode) a
-dark/light + palette-style opinion. The mood also feeds generative Topaz
-models. Everything is optional — no AI configured just means
-`"<Game> — Steam Theme"` names.
+Studio, Ollama, vLLM) or cloud (OpenRouter, etc.). The model is shown the
+**hero artwork only** (the logo and icon are never sent), along with the
+game's name and its extracted palette colors. It returns a theme name, a
+mood description, and (in auto mode) a dark/light + palette-style opinion.
+The mood also feeds generative upscaling. Everything is optional — no AI
+configured just means `"<Game> — Steam Theme"` names.
 
 **Custom prompts:** the *Naming prompt* field in the AI section is pre-filled
 with the built-in default as a guide — edit it freely to steer naming style
@@ -404,12 +422,32 @@ with the built-in default as a guide — edit it freely to steer naming style
 can't break; the **Reset** button restores the default. Leaving the field
 unchanged (or empty) keeps the built-in prompt out of your config entirely.
 
-## 🔎 Upscaling with Topaz Gigapixel
+**Extra JSON keys become placeholders.** Ask the model for additional keys —
+e.g. `"positive_upscale_prompt"` — and every value comes back through
+the whole pipeline as a placeholder (`{positive_upscale_prompt}`), usable in
+Topaz generative prompts *and* inside ComfyUI workflow JSON. This is how
+the VLM can steer your upscaler per game; see the upscaling sections below.
 
-When artwork is smaller than the monitor it must fill, it can be upscaled
-through the [Topaz Labs](https://www.topazlabs.com/) image API (paid,
-per-image credits — the **Test** button verifies your key *without*
-spending any):
+## 🔎 Upscaling
+
+When artwork is smaller than the monitor it must fill, it gets enlarged by
+whichever **provider** you pick in the Upscaling section:
+
+- **Topaz Gigapixel** ([cloud](https://www.topazlabs.com/), per-image
+  credits) — faithful or generative models, per role.
+- **ComfyUI** (your own GPU, **free**) — any local workflow, queueable
+  while you game.
+- **AI images endpoint** (OpenAI-compatible `/images/edits`) — best-effort;
+  few servers implement it.
+
+Results are cached per provider + model (or per workflow) — a cached upscale
+is never re-billed or re-run. The *Full refetch* button deletes the current
+game's cached art and re-generates it, which **does** spend credits when
+the provider is Topaz.
+
+### Topaz Gigapixel (cloud, paid)
+
+The **Test** button verifies your key *without* spending any credits:
 
 - **Precision models** (`Standard V2`, `High Fidelity V2`, `Low Resolution
   V2`, `Text Refine`, `CGI`) — faithful enlargement, ~1 credit per 24 MP.
@@ -423,11 +461,6 @@ spending any):
   placeholders too (a `"genre"` key becomes `{genre}`). Unknown
   placeholders are ignored, never an error.
 - **Per-role models**: e.g. Bloom 2 for heroes, Text Refine for logos/icons.
-
-Results are cached per model — a cached upscale is never re-billed. The
-*Full refetch* button in the UI deletes the current game's cached art and
-upscales (re-generates) them, which **does** spend credits. Alternatively,
-`provider: "ai"` uses an OpenAI-compatible images endpoint, best-effort.
 
 ### ComfyUI (local, free)
 
@@ -580,7 +613,7 @@ python main.py --once --force # re-theme even if unchanged (uses cache)
 python main.py --once --dry-run  # full pipeline, changes nothing
 python main.py --appid 440    # theme a specific game by appid
 python main.py --fetch-all    # Ultimate Fetch: cache art for the whole library
-python main.py --fetch-all --upscale   # ...and upscale it (spends Topaz credits)
+python main.py --fetch-all --upscale   # ...and upscale it (Topaz credits, or ComfyUI GPU time)
 python main.py --reapply      # re-apply the current cached theme
 python main.py --ui           # browser config page
 python main.py --ui --port 8800
@@ -594,6 +627,7 @@ Everything the app writes stays inside its own folder:
 |---|---|
 | `config.json` | your settings + API keys (gitignored, never committed) |
 | `cache/<appid>/` | per-game art, upscales, palette, theme file, wallpapers |
+| `cache/comfy_queue.json` | ComfyUI upscale jobs deferred while a game is running (drained automatically) |
 | `state.json` | last themed game, manual hold (gitignored) |
 | `service.log` | what the service has been doing (gitignored) |
 | `windows_backup.json` / `desktop_backup.json` | pre-app desktop snapshot |
@@ -648,12 +682,15 @@ CI. Platform-specific tests skip cleanly on the other OS.
 | Steam test says "no player returned" | Wrong API key or SteamID64; re-check both in the Steam section |
 | Nothing themes even though the key works | The game must be *your* last-played (play it for a minute) or running; check the Activity log in the UI |
 | UI won't open at 127.0.0.1:8765 | Something else uses the port: `python main.py --ui --port 8800` |
-| Wallpaper didn't change | `cache/` was deleted — use **Full refetch** in the UI (note: re-runs upscaling, may use Topaz credits) |
+| Wallpaper didn't change | `cache/` was deleted — use **Full refetch** in the UI (note: re-runs upscaling — Topaz credits or ComfyUI GPU time) |
 | Windows theme looks "half applied" after unlock | Expected occasionally; the unlock task re-applies it. Re-run `python main.py --reapply` |
 | SignalRGB lighting never changes | SignalRGB must be running with local API (Pro). Restart it once after the first theme so it discovers the effect files |
 | SignalRGB test fails | Pro subscription, or check the API URL in Extras |
 | OpenRGB "SDK server not reachable" | Run `openrgb --server` (and autostart it); check host/port in Extras |
 | Topaz test/upscale fails | Key invalid or out of credits — the Test button only verifies the key |
+| ComfyUI test fails | ComfyUI must be installed and running at the host/port in the Upscaling section; the Test button checks reachability **and** your workflow JSON |
+| ComfyUI upscales never seem to run | *Defer while gaming* is on (default): jobs queue while you play and drain when you stop — the log names every deferred job. Also check the per-image timeout |
+| ComfyUI job fails on the GPU side | Read the log line (`comfy job failed: …`) — usually a model missing from ComfyUI (the built-in default needs SDXL + the 4x-UltraSharp upscaler) or an out-of-memory tile size |
 | Linux: monitor names don't match | Use connector names (`HDMI-A-1`) — the Monitors section shows exactly what to match |
 | Linux: `xrdb: Can't open display` in logs | Harmless Wayland-session noise from KDE tools; can be ignored |
 | Linux: nothing happens in Game Mode | Theming targets the Plasma desktop session — the theme applies when you return to the desktop; detection still runs |
