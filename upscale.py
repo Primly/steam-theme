@@ -35,6 +35,27 @@ def _slug(s):
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
 
 
+def fill_prompt(template, context):
+    """Substitute {placeholders} from context into a Topaz prompt template.
+
+    Available keys: {game} plus the VLM's JSON values ({mood}, {theme_name},
+    {appearance}, {palette_mode}). Unknown placeholders are dropped (never
+    raise on a hand-typed template) and reported, so a typo can't fail the
+    pipeline. Returns (filled_text, dropped_keys).
+    """
+    dropped = []
+
+    def sub(m):
+        key = m.group(1)
+        if context.get(key) is not None:
+            return str(context[key])
+        dropped.append(key)
+        return ""
+
+    out = re.sub(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", sub, template)
+    return out, dropped
+
+
 def _needs_upscale(path, target_w, target_h):
     with Image.open(path) as im:
         w, h = im.size
@@ -69,8 +90,11 @@ def _topaz(src, dst, cfg, log, target_w, target_h, context=None, role=None,
         data["creativity"] = str(topaz.get("creativity", 3))
         prompt = (topaz.get("prompt") or "").strip()
         if prompt and context:
-            prompt = prompt.format(game=context.get("game", ""),
-                                   mood=context.get("mood", ""))[:1024]
+            prompt, dropped = fill_prompt(prompt, context)
+            if dropped:
+                log(f"  [up] unknown prompt placeholders ignored: "
+                    f"{', '.join(sorted(set(dropped)))}")
+            prompt = prompt[:1024]
         if prompt:
             data["prompt"] = prompt
         else:

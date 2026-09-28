@@ -306,8 +306,11 @@
   </div>
   <div class="row">
     <label for="topazPrompt" class="top">Prompt (generative)</label>
-    <textarea id="topazPrompt" placeholder="{game} key art, {mood} atmosphere — placeholders filled per game; empty = Topaz autoprompt"></textarea>
+    <textarea id="topazPrompt" placeholder="{game} key art, {mood} atmosphere — empty = Topaz autoprompt"></textarea>
   </div>
+  <p class="hint">Placeholders filled per game: <code>{game}</code>, plus the VLM's JSON
+    values <code>{mood}</code>, <code>{theme_name}</code>, <code>{appearance}</code>,
+    <code>{palette_mode}</code>. Unknown placeholders are ignored (and logged).</p>
   <div class="sub">Per-role overrides</div>
   <p class="hint">e.g. Bloom 2 for heroes, Text Refine for logos/icons. Switching a model re-generates that role's upscale (cached per model).</p>
   <div class="row"><label for="mHero">Hero</label><select id="mHero"></select></div>

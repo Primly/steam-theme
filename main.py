@@ -35,7 +35,7 @@ else:
     import linux_theme as theme_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-__version__ = "1.5.0"
+__version__ = "1.5.1"
 
 
 def safe_join(base, *parts):
@@ -159,8 +159,12 @@ def run_pipeline(cfg, game, log, dry_run=False):
     theme_name = (ai or {}).get("theme_name") or f"{name} — Steam Theme"
     mood = (ai or {}).get("mood", "")
 
-    # upscale after VLM naming so the mood can steer generative Topaz models
-    up_ctx = {"game": name, "mood": mood}
+    # upscale after VLM naming so its JSON values (mood, theme_name, …) can
+    # steer generative Topaz models via prompt placeholders
+    up_ctx = {"game": name, "mood": mood, "theme_name": theme_name,
+              "appearance": pal["appearance"],
+              "palette_mode": (ai or {}).get("palette_mode")
+                              or cfg.get("palette_mode", "colorful")}
     hero_set = _hero_settings(cfg)
     candidates = [c for c in (art.get("hero_candidates") or [])
                   if isinstance(c, str)]

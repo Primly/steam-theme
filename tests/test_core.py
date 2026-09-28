@@ -19,6 +19,7 @@ import wallpaper  # noqa: E402
 import extras  # noqa: E402
 import srgb_effects  # noqa: E402
 import steamdetect  # noqa: E402
+import upscale  # noqa: E402
 
 if sys.platform == "win32":
     import theme  # noqa: E402  (Windows-only module)
@@ -636,6 +637,93 @@ class TestWindowsSlideshowTheme(unittest.TestCase):
         self.assertEqual(wallpaper.first_art_path(art), "logo.jpg")
         self.assertEqual(wallpaper.first_art_path({"hero": "h.jpg"}), "h.jpg")
         self.assertIsNone(wallpaper.first_art_path({"hero_candidates": [1]}))
+
+
+class TestUpscalePromptTemplate(unittest.TestCase):
+    CTX = {"game": "Hades II", "mood": "dark fantasy",
+           "theme_name": "Ashen Vigil", "appearance": "dark",
+           "palette_mode": "muted"}
+
+    def test_all_vlm_keys_filled(self):
+        out, dropped = upscale.fill_prompt(
+            "{game} | {mood} | {theme_name} | {appearance} | {palette_mode}",
+            self.CTX)
+        self.assertEqual(out,
+                         "Hades II | dark fantasy | Ashen Vigil | dark | muted")
+        self.assertEqual(dropped, [])
+
+    def test_unknown_placeholders_dropped_not_raised(self):
+        # a typo'd placeholder must not crash the pipeline (str.format would
+        # raise KeyError here)
+        out, dropped = upscale.fill_prompt("{game} {them_name} x", self.CTX)
+        self.assertEqual(out, "Hades II  x")
+        self.assertEqual(dropped, ["them_name"])
+
+    def test_empty_values_stay_empty_and_literal_braces_untouched(self):
+        out, _ = upscale.fill_prompt("{game} [{mood}]", {"game": "X",
+                                                         "mood": ""})
+        self.assertEqual(out, "X []")
+        out, _ = upscale.fill_prompt("no placeholders", self.CTX)
+        self.assertEqual(out, "no placeholders")
+
+    def _run_topaz(self, prompt_template, ctx):
+        """Run _topaz with mocked HTTP; return (submitted_payload, logs, out)."""
+        import io
+        from PIL import Image
+        submitted = {}
+        buf = io.BytesIO()
+        Image.new("RGB", (16, 16), (1, 2, 3)).save(buf, "PNG")
+        png_bytes = buf.getvalue()
+
+        class Resp:
+            def __init__(self, code, payload=None, content=b""):
+                self.status_code = code
+                self._payload = payload or {}
+                self.content = content
+                self.headers = {"Content-Type": "application/octet-stream"}
+                self.text = json.dumps(self._payload)
+
+            def json(self):
+                return self._payload
+
+        def fake_post(url, **kw):
+            submitted.update(kw.get("data") or {})
+            return Resp(202, {"process_id": "p1"})
+
+        def fake_get(url, **kw):
+            if "/status/" in url:
+                return Resp(200, {"status": "Completed"})
+            return Resp(200, content=png_bytes)  # the download
+
+        cfg = {"upscaling": {"enabled": True, "provider": "topaz"},
+               "topaz": {"api_key": "k", "model": "Bloom 2",
+                         "prompt": prompt_template}}
+        logs = []
+        with tempfile.TemporaryDirectory() as d:
+            src = os.path.join(d, "hero_1.png")
+            with open(src, "wb") as f:
+                f.write(png_bytes)
+            with mock.patch.object(upscale.requests, "post", fake_post), \
+                    mock.patch.object(upscale.requests, "get", fake_get), \
+                    mock.patch.object(upscale.time, "sleep"):
+                out = upscale._topaz(src, os.path.join(d, "out.png"), cfg,
+                                     logs.append, 100, 100, ctx, "hero")
+        return submitted, logs, out
+
+    def test_topaz_submits_filled_prompt(self):
+        """End-to-end through _topaz with mocked HTTP: the generative job
+        payload must carry the filled prompt, placeholders resolved."""
+        submitted, logs, out = self._run_topaz(
+            "{game}, {mood}, {theme_name}, {nope}",
+            {"game": "Hades II", "mood": "dark", "theme_name": "Ashen Vigil"})
+        self.assertEqual(submitted.get("prompt"), "Hades II, dark, Ashen Vigil, ")
+        self.assertIsNotNone(out)
+        self.assertTrue(any("unknown prompt placeholders" in m and "nope" in m
+                            for m in logs))
+
+    def test_topaz_prompt_capped_at_1024(self):
+        submitted, logs, out = self._run_topaz("{game}", {"game": "x" * 5000})
+        self.assertEqual(len(submitted.get("prompt", "")), 1024)
 
 
 class TestNamingPrompt(unittest.TestCase):
