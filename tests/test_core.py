@@ -129,6 +129,118 @@ class TestSrgbEffects(unittest.TestCase):
         self.assertIn("#ABCDEF", html)
 
 
+class TestTerminalReadability(unittest.TestCase):
+    """Terminal text must stay readable over the game's artwork: the
+    foreground clears WCAG AA (4.5:1) against the worst-case blended
+    backdrop (dimming the image if even white/black text couldn't), and
+    ANSI colors are lightness-shifted until they clear 3:1."""
+
+    def setUp(self):
+        from PIL import Image
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(
+            self.dir, ignore_errors=True))
+        self.bright = os.path.join(self.dir, "bright.jpg")
+        self.dark_img = os.path.join(self.dir, "dark.jpg")
+        Image.new("RGB", (64, 64), (245, 245, 245)).save(self.bright, "JPEG")
+        Image.new("RGB", (64, 64), (15, 12, 20)).save(self.dark_img, "JPEG")
+        # dark theme; Color1 is a dark red that nearly vanishes on the bg
+        self.pal_dark = {"background": "#101018", "appearance": "dark",
+                         "accent": "#66C0F4",
+                         "colors": ["#181820", "#7A2A2A", "#3A5F3A",
+                                    "#8A7A3A", "#3A4A7A", "#6A3A6A",
+                                    "#3A6A6A", "#B8B8C0",
+                                    "#282830", "#A03030", "#4A7A4A",
+                                    "#AA9A4A", "#4A5A9A", "#8A4A8A",
+                                    "#4A8A8A", "#D8D8E0"]}
+
+    def _worst_L(self, img_hex, bg_hex, opacity):
+        return (opacity * extras._lum_hex(img_hex)
+                + (1 - opacity) * extras._lum_hex(bg_hex))
+
+    def test_bright_image_dark_theme_guarantees_contrast(self):
+        r = extras.readable_terminal_colors(self.pal_dark, self.bright, 1.0)
+        self.assertLess(r["opacity"], 1.0)  # the image had to be dimmed
+        # solid image: worst = typical = blend at the effective opacity
+        worst = extras._lum_as_gray_hex(
+            self._worst_L("#F5F5F5", "#101018", r["opacity"]))
+        self.assertGreaterEqual(extras._contrast_hex(r["foreground"], worst),
+                                4.5)
+        for i, c in enumerate(r["colors"]):
+            if i in (0, 8):
+                continue
+            self.assertGreaterEqual(extras._contrast_hex(c, worst), 3.0,
+                                    f"slot {i}")
+
+    def test_dark_image_light_theme_guarantees_contrast(self):
+        pal = dict(self.pal_dark, appearance="light", background="#F2F2F5")
+        r = extras.readable_terminal_colors(pal, self.dark_img, 0.9)
+        self.assertLess(r["opacity"], 0.9)
+        worst = extras._lum_as_gray_hex(
+            self._worst_L("#0F0C14", "#F2F2F5", r["opacity"]))
+        self.assertGreaterEqual(extras._contrast_hex(r["foreground"], worst),
+                                4.5)
+
+    def test_flat_bg_ansi_colors_lifted(self):
+        r = extras.readable_terminal_colors(self.pal_dark)
+        self.assertEqual(r["opacity"], 0.0)  # no image -> nothing to dim
+        bg = self.pal_dark["background"]
+        self.assertGreaterEqual(extras._contrast_hex(r["foreground"], bg), 4.5)
+        self.assertNotEqual(r["colors"][1], "#7A2A2A")  # dark red was lifted
+        for i, c in enumerate(r["colors"]):
+            if i in (0, 8):
+                continue
+            self.assertGreaterEqual(extras._contrast_hex(c, bg), 3.0,
+                                    f"slot {i}")
+
+    def test_readable_image_keeps_user_opacity(self):
+        # a dark image under a dark theme never forces dimming
+        r = extras.readable_terminal_colors(self.pal_dark, self.dark_img, 0.4)
+        self.assertEqual(r["opacity"], 0.4)
+
+    def test_black_slots_stay_conventional(self):
+        r = extras.readable_terminal_colors(self.pal_dark)
+        self.assertEqual(r["colors"][0], "#181820")
+        self.assertEqual(r["colors"][8], "#282830")
+
+    def test_konsole_scheme_uses_readable_colors(self):
+        import re
+        content = extras.render_konsole_colorscheme("Test", self.pal_dark)
+
+        def slot(name):
+            m = re.search(rf"\[{name}\]\nColor=(\d+),(\d+),(\d+)", content)
+            self.assertIsNotNone(m, name)
+            return "#%02X%02X%02X" % tuple(int(x) for x in m.groups())
+
+        bg, fg, red = slot("Background"), slot("Foreground"), slot("Color1")
+        self.assertGreaterEqual(extras._contrast_hex(fg, bg), 4.5)
+        self.assertGreaterEqual(extras._contrast_hex(red, bg), 3.0)
+
+    def test_windows_terminal_end_to_end(self):
+        path = os.path.join(self.dir, "settings.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"schemes": [], "profiles": {"defaults": {}}}, f)
+        cfg = {"windows_terminal": {"enabled": True,
+                                    "set_background_image": True,
+                                    "background_opacity": 1.0}}
+        with mock.patch.object(extras, "_wt_settings_paths",
+                               lambda: [path]):
+            extras.apply_windows_terminal(cfg, self.pal_dark, "TestTheme",
+                                          self.bright, lambda m: None)
+        with open(path, encoding="utf-8") as f:
+            out = json.load(f)
+        scheme = out["schemes"][0]
+        op = out["profiles"]["defaults"]["backgroundImageOpacity"]
+        self.assertEqual(scheme["name"], "TestTheme")
+        self.assertLess(op, 1.0)  # bright art had to be dimmed
+        worst = extras._lum_as_gray_hex(
+            self._worst_L("#F5F5F5", "#101018", op))
+        self.assertGreaterEqual(
+            extras._contrast_hex(scheme["foreground"], worst), 4.5)
+        self.assertGreaterEqual(extras._contrast_hex(scheme["red"], worst),
+                                3.0)
+
+
 class TestSteamDetectShapes(unittest.TestCase):
     def test_public_game_shape(self):
         g = steamdetect._public_game({"appid": 440, "name": "TF2",

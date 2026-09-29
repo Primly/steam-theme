@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.8.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.8.1-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -39,7 +39,8 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 - **Applies it everywhere:**
   - per-monitor wallpapers (hero on the big screen, logo & icon on the others)
   - system accent color + dark/light mode
-  - Windows Terminal / Konsole color scheme
+  - Windows Terminal / Konsole color scheme (text contrast guaranteed
+    against the artwork backdrop — no more unreadable terminals)
   - RGB lighting: SignalRGB (Windows) or OpenRGB (Linux)
 - **Runs itself** in the background and re-themes whenever you play a new game.
 
@@ -698,6 +699,14 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.8.1** — **readable terminals, always**: the terminal scheme's text
+  colors are now contrast-guaranteed against what's actually behind them —
+  the foreground clears WCAG AA (4.5:1) against the *worst-case* region of
+  the background-image blend, the image is dimmed (never brightened) when
+  even pure white/black text couldn't clear AA over bright/dark art, ANSI
+  colors are lightness-shifted (hue preserved) to 3:1 against the typical
+  backdrop, and the cursor/selection accent gets the same treatment. Fixes
+  theme art (e.g. bright skies) rendering terminal text invisible.
 - **1.8.0** — **per-role ComfyUI workflows**: optional Export-API JSON
   overrides for hero / logo / icon (empty = the role uses the main
   workflow), each with its own upscale cache slot so editing one role only

@@ -72,6 +72,183 @@ def _wt_settings_paths():
     ]
 
 
+# --- terminal text readability -------------------------------------------
+# Windows Terminal renders the background image at backgroundImageOpacity
+# OVER the flat scheme background, so the effective backdrop behind text
+# varies per pixel with the art. A fixed #E8E8E8 foreground can vanish
+# against a bright region; palette-derived ANSI colors can sit at ~1:1
+# against a dark background. These helpers guarantee contrast instead.
+
+_FG_CONTRAST = 4.5    # WCAG AA for the main text color
+_ANSI_CONTRAST = 3.0  # decorative ANSI slots vs the typical backdrop
+_MARGIN = 0.02        # safety margin for byte quantization / rounding
+
+
+def _lin(v):
+    """sRGB byte -> linear-light component."""
+    v /= 255.0
+    return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+
+
+def _rgb(hexcolor):
+    return tuple(int(hexcolor[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def _lum_hex(hexcolor):
+    """WCAG relative luminance of a #RRGGBB string."""
+    from palette import _rel_luminance
+    return _rel_luminance(_rgb(hexcolor))
+
+
+def _contrast_hex(a, b):
+    """WCAG contrast ratio of two #RRGGBB strings."""
+    from palette import contrast
+    return contrast(_rgb(a), _rgb(b))
+
+
+def _lum_as_gray_hex(L):
+    """A gray sRGB color with linear luminance L (contrast only reads
+    luminance, so a gray stand-in for the backdrop is exact)."""
+    s = 12.92 * L if L <= 0.0031308 else 1.055 * (L ** (1 / 2.4)) - 0.055
+    b = max(0, min(255, round(s * 255)))
+    return f"#{b:02X}{b:02X}{b:02X}"
+
+
+def _blend_hex(a, b, t):
+    """Per-channel mix: t (0..1) of b into a."""
+    ar, ag, ab = (int(a[i:i + 2], 16) for i in (1, 3, 5))
+    br, bg_, bb = (int(b[i:i + 2], 16) for i in (1, 3, 5))
+    return "#%02X%02X%02X" % (round(ar + (br - ar) * t),
+                              round(ag + (bg_ - ag) * t),
+                              round(ab + (bb - ab) * t))
+
+
+def _image_luminances(image_path):
+    """Sorted per-pixel linear luminances of the image (downscaled), or
+    None when unavailable. Sorted once: percentiles of the blended backdrop
+    are blends of percentiles, because the blend is monotone."""
+    try:
+        from PIL import Image
+        with Image.open(image_path) as im:
+            im = im.convert("RGB")
+            im.thumbnail((64, 64))
+            px = list(im.getdata())
+        ls = sorted(0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b)
+                    for r, g, b in px)
+        return ls or None
+    except Exception:
+        return None
+
+
+def _pct(sorted_vals, p):
+    i = min(len(sorted_vals) - 1,
+            max(0, round(p / 100 * (len(sorted_vals) - 1))))
+    return sorted_vals[i]
+
+
+def _shift_to_contrast(hexcolor, reference_hex, ratio, lighten):
+    """Nudge lightness (hue/saturation preserved) until hexcolor clears
+    `ratio` against reference_hex. Best-effort at the lightness extremes."""
+    if _contrast_hex(hexcolor, reference_hex) >= ratio:
+        return hexcolor
+    import colorsys
+    r, g, b = (int(hexcolor[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    out = hexcolor
+    for _ in range(24):
+        l = min(1.0, l + 0.04) if lighten else max(0.0, l - 0.04)
+        r2, g2, b2 = colorsys.hls_to_rgb(h, l, s)
+        out = "#%02X%02X%02X" % (round(r2 * 255), round(g2 * 255),
+                                 round(b2 * 255))
+        if _contrast_hex(out, reference_hex) >= ratio:
+            break
+    return out
+
+
+def readable_terminal_colors(palette, image_path=None, opacity=0.0, log=None):
+    """Terminal colors guaranteed readable over the terminal background.
+
+    - FOREGROUND clears WCAG AA (4.5:1) against the WORST-CASE effective
+      backdrop (brightest 5% of the image blend for dark themes, darkest
+      5% for light),
+    - the image is DIMMED (opacity lowered, never raised) when even pure
+      white/black text couldn't clear AA otherwise,
+    - ANSI colors are lightness-shifted (hue preserved) to 3:1 against the
+      TYPICAL (median) backdrop; black/brightBlack stay conventional,
+    - the accent (cursor/selection) gets the same 3:1 treatment.
+
+    Returns {"foreground", "colors", "accent", "opacity"} — colors has the
+    same length as palette["colors"] (empty if the palette has none).
+    """
+    log = log or (lambda m: None)
+    bg = palette.get("background") or "#101014"
+    dark = palette.get("appearance") != "light"
+    colors = [c for c in (palette.get("colors") or []) if isinstance(c, str)]
+    accent = palette.get("accent") or "#66C0F4"
+
+    L_bg = _lum_hex(bg)
+    img = (_image_luminances(image_path)
+           if image_path and opacity and opacity > 0 else None)
+    eff_opacity = float(opacity) if img else 0.0
+
+    if img:
+        img_worst = _pct(img, 95 if dark else 5)
+        # limit on the worst-case blended luminance that still lets pure
+        # white (dark theme) or pure black (light theme) clear AA
+        limit = ((1.0 + 0.05) / _FG_CONTRAST - 0.05) * (1 - _MARGIN) if dark \
+            else (0.05 * _FG_CONTRAST - 0.05) * (1 + _MARGIN)
+        too_bright = dark and img_worst > limit and L_bg < limit
+        too_dark = not dark and img_worst < limit and L_bg > limit
+        if too_bright or too_dark:
+            import math
+            op_max = (limit - L_bg) / (img_worst - L_bg)
+            # floor (never round up) and keep a faint 5% minimum of the art
+            new_op = max(0.05, min(eff_opacity,
+                                   math.floor(op_max * 1000) / 1000))
+            if new_op < eff_opacity - 1e-3:
+                log(f"  [term] background image dimmed "
+                    f"{eff_opacity:.2f} -> {new_op:.2f} so text stays readable")
+                eff_opacity = new_op
+        worst = eff_opacity * img_worst + (1 - eff_opacity) * L_bg
+        typical = eff_opacity * _pct(img, 50) + (1 - eff_opacity) * L_bg
+    else:
+        worst = typical = L_bg
+
+    worst_hex = _lum_as_gray_hex(worst)
+    typical_hex = _lum_as_gray_hex(typical)
+
+    # foreground: theme-tinted near-white/black first, then step neutral
+    neutral = "#E8E8E8" if dark else "#1A1A1A"
+    tinted = (_blend_hex((max if dark else min)(colors, key=_lum_hex),
+                         neutral, 0.5) if colors else neutral)
+    candidates = ([tinted, "#E8E8E8", "#F2F2F2", "#FFFFFF"] if dark else
+                  [tinted, "#1A1A1A", "#101010", "#000000"])
+    fg = candidates[-1]
+    for c in candidates:
+        if _contrast_hex(c, worst_hex) >= _FG_CONTRAST:
+            fg = c
+            break
+    if fg != candidates[0]:
+        log("  [term] foreground neutralized for contrast over the artwork")
+
+    fixed, n_shifted = [], 0
+    for i, c in enumerate(colors[:16]):
+        if i in (0, 8):  # black / brightBlack conventionally track the bg
+            fixed.append(c)
+            continue
+        out = _shift_to_contrast(c, typical_hex, _ANSI_CONTRAST, lighten=dark)
+        n_shifted += out != c
+        fixed.append(out)
+    if n_shifted:
+        log(f"  [term] {n_shifted} ANSI color(s) lightness-adjusted "
+            "for contrast")
+
+    acc = _shift_to_contrast(accent, typical_hex, _ANSI_CONTRAST,
+                             lighten=dark)
+    return {"foreground": fg, "colors": fixed, "accent": acc,
+            "opacity": round(eff_opacity, 3)}
+
+
 def apply_windows_terminal(cfg, palette, theme_name, wallpaper_path, log=print):
     wt = cfg.get("windows_terminal", {})
     if not wt.get("enabled"):
@@ -87,13 +264,18 @@ def apply_windows_terminal(cfg, palette, theme_name, wallpaper_path, log=print):
         log(f"  [wt] could not parse settings.json (comments/trailing commas?): {e}")
         return
 
-    colors = (palette["colors"] + palette["colors"])[:16]
+    readable = readable_terminal_colors(
+        palette,
+        wallpaper_path if wt.get("set_background_image") else None,
+        wt.get("background_opacity", 0.25), log)
+    colors = (readable["colors"] + readable["colors"])[:16] or \
+        (palette["colors"] + palette["colors"])[:16]
     scheme = {
         "name": theme_name,
         "background": palette["background"],
-        "foreground": "#E8E8E8" if palette["appearance"] == "dark" else "#1A1A1A",
-        "cursorColor": palette["accent"],
-        "selectionBackground": palette["accent"],
+        "foreground": readable["foreground"],
+        "cursorColor": readable["accent"],
+        "selectionBackground": readable["accent"],
     }
     scheme.update(dict(zip(_WT_SLOTS, colors)))
 
@@ -105,7 +287,7 @@ def apply_windows_terminal(cfg, palette, theme_name, wallpaper_path, log=print):
     defaults["colorScheme"] = theme_name
     if wt.get("set_background_image") and wallpaper_path:
         defaults["backgroundImage"] = os.path.abspath(wallpaper_path)
-        defaults["backgroundImageOpacity"] = wt.get("background_opacity", 0.25)
+        defaults["backgroundImageOpacity"] = readable["opacity"]
         defaults["backgroundImageStretchMode"] = "uniformToFill"
 
     try:
@@ -186,11 +368,15 @@ def _hex_to_rgb_csv(hexcolor):
 def render_konsole_colorscheme(name, palette):
     """Konsole .colorscheme file content built from the theme palette.
     Slot mapping mirrors the Windows Terminal scheme: Color0-7 from the
-    palette's first 8 colors, Intense variants from the next 8."""
+    palette's first 8 colors, Intense variants from the next 8. Foreground
+    and ANSI colors are contrast-guaranteed against the background (Konsole
+    schemes here use a flat background — no image)."""
     from wallpaper import _ini_safe
-    colors = (list(palette.get("colors")) + list(palette.get("colors")))[:16]
+    readable = readable_terminal_colors(palette)
+    colors = (readable["colors"] + readable["colors"])[:16] or \
+        (list(palette.get("colors")) + list(palette.get("colors")))[:16]
     bg = _hex_to_rgb_csv(palette["background"])
-    fg = "232,232,232" if palette.get("appearance") == "dark" else "26,26,26"
+    fg = _hex_to_rgb_csv(readable["foreground"])
     lines = ["[Background]", f"Color={bg}", "",
              "[Foreground]", f"Color={fg}", ""]
     for i in range(8):
