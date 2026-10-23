@@ -700,6 +700,35 @@ def we_monitor(cfg, hero_device):
     return 0
 
 
+def publish_to_we(exe, project_path, log=print):
+    """Copy the generated video into Wallpaper Engine's own myprojects
+    folder (like WE's built-in video wallpapers) so the wallpaper survives
+    cache wipes, and return the published .mp4 path (WE's -control accepts
+    a video file directly). Returns None when there is no video."""
+    import shutil
+    import extras
+    d = os.path.dirname(project_path)
+    vid = next((os.path.join(d, n) for n in sorted(os.listdir(d))
+                if n.lower().endswith(_VIDEO_EXTS)), None)
+    if not vid:
+        return None
+    try:
+        with open(project_path, encoding="utf-8") as f:
+            proj = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        proj = {}
+    slug = extras._safe_title_name(proj.get("title") or "Steam Theme")
+    dest = os.path.join(os.path.dirname(exe), "projects", "myprojects",
+                        "steam-theme", slug)
+    os.makedirs(dest, exist_ok=True)
+    name = os.path.basename(vid)
+    shutil.copyfile(vid, os.path.join(dest, name))
+    with open(os.path.join(dest, "project.json"), "w",
+              encoding="utf-8") as f:
+        json.dump(dict(proj, file=name), f, indent=2)
+    return os.path.join(dest, name)
+
+
 def apply_we(cfg, project_path, hero_device, log=print):
     """Set the generated wallpaper video in Wallpaper Engine, live via
     -control when it's running (it updates its own config); otherwise by
@@ -713,15 +742,20 @@ def apply_we(cfg, project_path, hero_device, log=print):
         log("  [livewall] Wallpaper Engine not found; video is cached for "
             "later use")
         return False
+    published = publish_to_we(exe, project_path, log)
+    if not published:
+        log("  [livewall] no video file next to the project — nothing to "
+            "apply")
+        return False
     idx = we_monitor(cfg, hero_device)
     if we_running():
         try:
             r = subprocess.run([exe, "-control", "openWallpaper",
-                                "-file", os.path.abspath(project_path),
+                                "-file", published,
                                 "-monitor", str(idx)],
                                capture_output=True, text=True, timeout=30)
             log(f"  [livewall] applied to Wallpaper Engine monitor {idx} "
-                f"(exit {r.returncode})")
+                f"(exit {r.returncode}) -> {published}")
             return r.returncode == 0
         except Exception as e:
             log(f"  [livewall] WE control failed: {e}")
@@ -737,8 +771,7 @@ def apply_we(cfg, project_path, hero_device, log=print):
         sel = (user.setdefault("general", {})
                .setdefault("wallpaperconfig", {})
                .setdefault("selectedwallpapers", {}))
-        sel[f"Monitor{idx}"] = {"file": os.path.abspath(project_path)
-                                .replace("\\", "/")}
+        sel[f"Monitor{idx}"] = {"file": published.replace("\\", "/")}
         tmp = cfgp + ".steamtheme.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(c, f, indent=0)

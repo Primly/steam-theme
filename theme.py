@@ -196,6 +196,28 @@ def write_registry_colors(palette, log=print, system_mode="match", app_mode="mat
         winreg.SetValueEx(k, "AppsUseLightTheme", 0, winreg.REG_DWORD, app_light)
         winreg.SetValueEx(k, "SystemUsesLightTheme", 0, winreg.REG_DWORD, sys_light)
         winreg.SetValueEx(k, "ColorPrevalence", 0, winreg.REG_DWORD, 1)
+    # force the modern desktop background mode to plain Picture: a Windows
+    # slideshow (BackgroundType=2) or Spotlight repaints the real desktop
+    # periodically and flashes over Wallpaper Engine's animated layer —
+    # WE warns about exactly this when both are installed
+    try:
+        with winreg.CreateKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion"
+                r"\Explorer\Wallpapers") as k:
+            cur = None
+            try:
+                cur, _ = winreg.QueryValueEx(k, "BackgroundType")
+            except OSError:
+                pass
+            if cur != 0:
+                winreg.SetValueEx(k, "BackgroundType", 0,
+                                  winreg.REG_DWORD, 0)
+                log("  [reg] desktop background mode -> Picture "
+                    "(slideshow/Spotlight off, so Wallpaper Engine won't "
+                    "be painted over)")
+    except OSError:
+        pass
     # notify running apps of the personalization change
     HWND_BROADCAST, WM_SETTINGCHANGE = 0xFFFF, 0x001A
     SMTO_ABORTIFHUNG = 0x0002

@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.9.1-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.9.2-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -701,7 +701,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 200 tests
+python -m unittest discover -s tests -v   # 205 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -736,7 +736,9 @@ CI. Platform-specific tests skip cleanly on the other OS.
 | ComfyUI upscales never seem to run | *Defer while gaming* is on (default): jobs queue while you play and drain when you stop — the log names every deferred job. Also check the per-image timeout |
 | ComfyUI job fails on the GPU side | Read the log line (`comfy job failed: …`) — usually a model missing from ComfyUI (the built-in default needs SDXL + the 4x-UltraSharp upscaler) or an out-of-memory tile size |
 | Live wallpaper never generates | *Defer while gaming* is on (default): it queues while you play and generates when you stop — the log names every queued job. Also check the ComfyUI host/port in the Live wallpaper section and that its workflow passes Test |
-| Video generated but Wallpaper Engine doesn't show it | WE must be running for live apply (otherwise it's queued in WE's config for its next launch); if it lands on the wrong display, set an explicit Wallpaper Engine monitor in the config UI |
+| Video generated but Wallpaper Engine doesn't show it | WE must be running for live apply (otherwise it's queued in WE's config for its next launch); if it lands on the wrong display, set an explicit Wallpaper Engine monitor in the config UI. Videos are published into WE's own `projects/myprojects/steam-theme/` folder |
+| WE warns that a slideshow/Spotlight wallpaper will show over the live wallpaper | Steam Theme forces the Windows background mode to **Picture** on every apply (a slideshow repaints the desktop periodically and flashes over WE). If you set a slideshow yourself afterwards, the warning returns — switch Settings → Personalisation → Background back to a picture |
+| The video takes ages to generate | Cost scales with frames × pixels: a 12 s loop at 2560×720 is 289 frames of 22B video diffusion — hours on modest GPUs. In the workflow JSON, `value_2` (duration), `value_4` (height) and `value_5` (fps) are the levers; 5 s at 2560×720 is ~121 frames. Generation runs in the background (queued while gaming), so slow is fine — just let it work |
 | Linux: monitor names don't match | Use connector names (`HDMI-A-1`) — the Monitors section shows exactly what to match |
 | Linux: `xrdb: Can't open display` in logs | Harmless Wayland-session noise from KDE tools; can be ignored |
 | Linux: nothing happens in Game Mode | Theming targets the Plasma desktop session — the theme applies when you return to the desktop; detection still runs |
@@ -744,6 +746,17 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.9.2** — **live wallpaper x Wallpaper Engine coexistence**: the video
+  is now published into Wallpaper Engine's own `projects/myprojects/steam-theme/`
+  tree (like WE's built-in video wallpapers) and applied as a video file —
+  so a cache wipe or *Full refetch* can't orphan the wallpaper. Applying a
+  theme now also forces Windows' modern desktop background mode to plain
+  **Picture**: a Windows slideshow (`BackgroundType=2`) or Spotlight repaints
+  the real desktop periodically and flashes over WE's animated layer — the
+  exact thing WE warns about when both are installed (`WindowsSpotlight=0`
+  was already in the .theme; the modern mode key is now re-asserted too).
+  Also: hand-edited workflows with bare `{placeholder}` tokens are
+  auto-quoted instead of failing as invalid JSON.
 - **1.9.1** — **excluded utilities aren't games** (live-wallpaper edition):
   Steam's now-playing registry reports Wallpaper Engine as "running"
   while it sits in the tray — so every deferred upscale/video job thought

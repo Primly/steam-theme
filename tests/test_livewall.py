@@ -423,10 +423,15 @@ class TestWallpaperEngine(LiveWallFixture):
         proj = os.path.join(self.dir, "project.json")
         with open(proj, "w") as f:
             f.write("{}")
+        vid = os.path.join(self.dir, "wallpaper.mp4")
+        with open(vid, "wb") as f:
+            f.write(_mp4_bytes())
         exe = r"C:\fake\wallpaper64.exe"
         with mock.patch.object(livewall, "we_binary", lambda: exe), \
+                mock.patch.object(livewall, "publish_to_we",
+                                  lambda e, p, log: vid), \
                 mock.patch.object(livewall, "we_running",
-                                  lambda: True) as _r, \
+                                  lambda: True), \
                 mock.patch.object(livewall.subprocess, "run") as run:
             run.return_value = mock.Mock(returncode=0)
             ok = livewall.apply_we(self.cfg, proj, "\\\\.\\DISPLAY1",
@@ -435,6 +440,7 @@ class TestWallpaperEngine(LiveWallFixture):
         args = run.call_args[0][0]
         self.assertEqual(args[0], exe)
         self.assertEqual(args[1:4], ["-control", "openWallpaper", "-file"])
+        self.assertEqual(args[4], vid)      # the mp4, not project.json
         self.assertEqual(args[6], "0")     # DISPLAY1 -> monitor 0
         self.assertEqual(args[5], "-monitor")
 
@@ -452,8 +458,13 @@ class TestWallpaperEngine(LiveWallFixture):
             json.dump({"?installdirectory": "x", "tester": {"general": {
                 "wallpaperconfig": {"selectedwallpapers": {
                     "Monitor0": {"file": None}}}}}}, f)
+        vid = os.path.join(self.dir, "wallpaper.mp4")
+        with open(vid, "wb") as f:
+            f.write(_mp4_bytes())
         with mock.patch.dict("os.environ", {"USERNAME": "tester"}), \
                 mock.patch.object(livewall, "we_binary", lambda: exe), \
+                mock.patch.object(livewall, "publish_to_we",
+                                  lambda e, p, log: vid), \
                 mock.patch.object(livewall, "we_running", lambda: False):
             ok = livewall.apply_we(self.cfg, proj, "\\\\.\\DISPLAY1",
                                    lambda m: None)
@@ -462,7 +473,32 @@ class TestWallpaperEngine(LiveWallFixture):
             c = json.load(f)
         got = c["tester"]["general"]["wallpaperconfig"][
             "selectedwallpapers"]["Monitor0"]["file"]
-        self.assertEqual(got, proj.replace("\\", "/"))
+        self.assertEqual(got, vid.replace("\\", "/"))
+
+    def test_publish_copies_into_we_myprojects(self):
+        # the video lands in WE's own projects tree (like its built-in
+        # video wallpapers) so cache wipes can't orphan the wallpaper
+        we = os.path.join(self.dir, "wallpaper_engine")
+        os.makedirs(we)
+        exe = os.path.join(we, "wallpaper64.exe")
+        with open(exe, "w") as f:
+            f.write("x")
+        projdir = os.path.join(self.dir, "proj")
+        os.makedirs(projdir)
+        with open(os.path.join(projdir, "wallpaper.mp4"), "wb") as f:
+            f.write(_mp4_bytes())
+        with open(os.path.join(projdir, "project.json"), "w") as f:
+            json.dump({"file": "wallpaper.mp4", "type": "video",
+                       "title": "Frostbound Vigil - The Witcher 3"}, f)
+        out = livewall.publish_to_we(exe, os.path.join(projdir,
+                                                       "project.json"),
+                                     lambda m: None)
+        self.assertTrue(os.path.isfile(out))
+        self.assertIn(os.path.join("projects", "myprojects", "steam-theme"),
+                      out)
+        self.assertTrue(out.endswith("wallpaper.mp4"))
+        self.assertTrue(os.path.isfile(os.path.join(
+            os.path.dirname(out), "project.json")))
 
     def test_install_writes_project_and_preview(self):
         proj = livewall.install(self.cfg, os.path.join(self.dir, "v.mp4"),
