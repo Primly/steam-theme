@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.9.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.9.1-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -701,7 +701,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 197 tests
+python -m unittest discover -s tests -v   # 200 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -744,6 +744,14 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.9.1** — **excluded utilities aren't games** (live-wallpaper edition):
+  Steam's now-playing registry reports Wallpaper Engine as "running"
+  while it sits in the tray — so every deferred upscale/video job thought
+  a game was in progress and queued forever, never draining. Running
+  apps on the exclude list no longer count as games for the defer gates
+  (and can't release manual holds, as of 1.9.0's hold fix). The live-wallpaper
+  queue also keeps only the newest job per game, so refetches that change
+  the hero don't stack stale generations.
 - **1.9.0** — **live wallpapers**: the hero art becomes a short looping
   video through a ComfyUI workflow and is installed as a Wallpaper Engine
   animated background on the hero display. Accepts both workflow formats —

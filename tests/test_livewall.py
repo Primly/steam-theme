@@ -251,6 +251,42 @@ class TestLiveWallQueue(LiveWallFixture):
         self.assertEqual(q[0]["cache_key"], "440")
         self.assertEqual(q[0]["theme_title"], "Ashen Vigil")
 
+    def test_maybe_generate_keeps_only_newest_job_per_game(self):
+        # a refetch changes the hero (new content hash) — the old queued
+        # job for the same game is stale and must be replaced, not stacked
+        from PIL import Image
+        h2 = os.path.join(self.dir, "hero2.jpg")
+        Image.new("RGB", (64, 64), (200, 30, 30)).save(h2, "JPEG")
+        with mock.patch.object(livewall, "_game_running", return_value=True):
+            livewall.maybe_generate(self.cfg, self.hero, {}, "440", "A",
+                                    "", lambda m: None)
+            livewall.maybe_generate(self.cfg, h2, {}, "440", "B",
+                                    "", lambda m: None)
+        q = self._q()
+        self.assertEqual(len(q), 1)
+        self.assertTrue(q[0]["dst"].startswith(
+            os.path.join(self.dir, "440", "livewall")))
+        self.assertEqual(q[0]["theme_title"], "B")
+
+    def test_excluded_running_app_is_not_a_game(self):
+        # Wallpaper Engine (431960, excluded) running via Steam's now-playing
+        # registry must NOT count as a running game — counting it would
+        # defer every queued upscale/video job forever
+        import steamdetect
+        import upscale
+        with mock.patch.object(steamdetect, "get_running_appid",
+                               lambda: 431960), \
+                mock.patch.object(steamdetect, "find_running_custom_game",
+                                  lambda c: None):
+            self.assertTrue(upscale._game_running({"exclude_appids": []}))
+            self.assertFalse(upscale._game_running(
+                {"exclude_appids": [431960]}))
+            # a real, non-excluded game still counts
+            with mock.patch.object(steamdetect, "get_running_appid",
+                                   lambda: 570):
+                self.assertTrue(upscale._game_running(
+                    {"exclude_appids": [431960]}))
+
 
 def _write(dst):
     os.makedirs(os.path.dirname(dst), exist_ok=True)

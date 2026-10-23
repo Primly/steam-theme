@@ -543,12 +543,18 @@ def fill_workflow(workflow, context):
 
 def _game_running(cfg):
     """True when a game is running right now (Steam now-playing or a watched
-    custom process). A detection failure must never stall upscales."""
+    custom process). A detection failure must never stall upscales.
+    Excluded apps (Wallpaper Engine and friends) are utilities, not
+    games: Steam's now-playing registry reports them while they run, and
+    counting them would defer every upscale/video job forever."""
     try:
         import steamdetect
-        return bool(steamdetect.get_running_appid()
-                    or steamdetect.find_running_custom_game(
-                        cfg.get("custom_games")))
+        appid = steamdetect.get_running_appid()
+        excludes = cfg.get("exclude_appids") or []
+        if appid and appid not in excludes:
+            return True
+        return bool(steamdetect.find_running_custom_game(
+            cfg.get("custom_games")))
     except Exception:
         return False
 

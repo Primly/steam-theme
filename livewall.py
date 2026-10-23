@@ -767,15 +767,20 @@ def maybe_generate(cfg, hero, context, cache_key, theme_title, hero_device,
         proj = install(cfg, dst, cache_key, theme_title, hero, log)
         apply_we(cfg, proj, hero_device, log)
     # generate() enqueues when deferred; annotate the queued job so the
-    # drain can install + apply it with full context
+    # drain can install + apply it with full context. Only ONE video job
+    # per game is kept — a refetch may change the hero (and its content
+    # hash), and only the newest job describes the current art.
     with _queue_lock:
         try:
             with open(_queue_file(cfg), encoding="utf-8") as f:
                 q = json.load(f)
         except (OSError, json.JSONDecodeError):
             q = []
+        q = [j for j in q if isinstance(j, dict)
+             and not (j.get("cache_key") == cache_key
+                      and j.get("dst") != dst)]
         for j in q:
-            if isinstance(j, dict) and j.get("dst") == dst:
+            if j.get("dst") == dst:
                 j.update({"cache_key": cache_key,
                           "theme_title": theme_title})
         tmp = _queue_file(cfg) + ".tmp"
