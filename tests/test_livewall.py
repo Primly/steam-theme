@@ -365,6 +365,10 @@ class TestLiveWallSubmit(LiveWallFixture):
 
 
 class TestWallpaperEngine(LiveWallFixture):
+    # apply_we() is a Windows-only path (it no-ops on other platforms),
+    # so its subprocess/config tests skip cleanly there — same convention
+    # as the other platform-specific tests
+
     def test_monitor_mapping(self):
         self.assertEqual(
             livewall.we_monitor({"livewall": {"we_monitor": 2}}, None), 2)
@@ -375,6 +379,8 @@ class TestWallpaperEngine(LiveWallFixture):
             livewall.we_monitor({"livewall": {}}, "\\\\.\\DISPLAY1"), 0)
         self.assertEqual(livewall.we_monitor({"livewall": {}}, ""), 0)
 
+    @unittest.skipUnless(sys.platform == "win32",
+                         "Wallpaper Engine apply is Windows-only")
     def test_apply_via_control_when_running(self):
         proj = os.path.join(self.dir, "project.json")
         with open(proj, "w") as f:
@@ -394,6 +400,8 @@ class TestWallpaperEngine(LiveWallFixture):
         self.assertEqual(args[6], "0")     # DISPLAY1 -> monitor 0
         self.assertEqual(args[5], "-monitor")
 
+    @unittest.skipUnless(sys.platform == "win32",
+                         "Wallpaper Engine config patch is Windows-only")
     def test_apply_via_config_when_not_running(self):
         exe = os.path.join(self.dir, "wallpaper64.exe")
         with open(exe, "w") as f:
