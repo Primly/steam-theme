@@ -36,7 +36,7 @@ else:
     import linux_theme as theme_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-__version__ = "1.9.2"
+__version__ = "1.9.3"
 
 
 def safe_join(base, *parts):
@@ -253,6 +253,10 @@ def run_pipeline(cfg, game, log, dry_run=False):
     # any custom keys the user's naming prompt asks for) can steer
     # generative Topaz models via prompt placeholders
     up_ctx = _upscale_context(name, pal, ai, cfg)
+    # the live-wallpaper video uses the ORIGINAL hero art: video diffusion
+    # downsamples to the workflow's output size anyway, and a 5120px upscale
+    # is pure upload/wait overhead
+    video_hero = art.get("hero")
     upscale_toward_monitors(cfg, art, monitors, name, log, up_ctx)
     # re-derive after the upscale pass: rotate mode swaps candidate paths for
     # their upscaled versions, which Stage 4 composes into slide variants
@@ -331,7 +335,7 @@ def run_pipeline(cfg, game, log, dry_run=False):
     extras.apply_rgb(cfg, pal, log)
     # optional looping-video wallpaper (ComfyUI -> Wallpaper Engine);
     # reuses the upscaler's VLM placeholder context
-    livewall.maybe_generate(cfg, art.get("hero"), up_ctx, cache_key,
+    livewall.maybe_generate(cfg, video_hero, up_ctx, cache_key,
                             theme_name,
                             next((m["device"] for m in monitors
                                   if m["role"] == "hero"), ""), log)

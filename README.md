@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.9.2-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.9.3-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -523,7 +523,9 @@ display:
   contract (a per-game ambient-motion description) and the VLM authors each
   video individually; without it the placeholder drops out harmlessly.
 - **Looping by construction**: every `LoadImage` node receives the hero
-  image, so the first and last frames match.
+  image, so the first and last frames match. The **original** art is sent —
+  never the upscale — since video diffusion downsamples to the workflow's
+  output size anyway and a 5120 px upload is pure wait.
 - **Defer while gaming** (default on): generation queues while a game runs
   and drains when you stop — one video takes minutes of GPU, so it never
   fights your game for it.
@@ -701,7 +703,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 205 tests
+python -m unittest discover -s tests -v   # 209 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -746,6 +748,12 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.9.3** — **live wallpapers use the original hero art**: the video
+  stage no longer uploads the upscaled hero (a 5120 px image is a slow
+  upload and gets downsampled to the workflow's output size regardless).
+  The pipeline passes the pre-upscale hero explicitly, and the module maps
+  any `hero_N_upscaled_*` path back to its source file defensively. 209
+  tests.
 - **1.9.2** — **live wallpaper x Wallpaper Engine coexistence**: the video
   is now published into Wallpaper Engine's own `projects/myprojects/steam-theme/`
   tree (like WE's built-in video wallpapers) and applied as a video file —

@@ -216,6 +216,43 @@ class TestWorkflowValidation(LiveWallFixture):
                                      "steamtheme_save"])
 
 
+class TestOriginalHeroSelection(LiveWallFixture):
+    """The video stage must use the ORIGINAL art — upscaled variants are
+    big uploads and the workflow downsamples to its output size anyway."""
+
+    def test_upscaled_maps_back_to_source(self):
+        src = os.path.join(self.dir, "hero_1.png")
+        from PIL import Image
+        Image.new("RGB", (16, 16)).save(src)
+        up = os.path.join(self.dir,
+                          "hero_1_upscaled_comfy-2d882e83.png")
+        Image.new("RGB", (256, 256)).save(up)
+        self.assertEqual(livewall._original_hero(up), src)
+
+    def test_plain_hero_passes_through(self):
+        src = os.path.join(self.dir, "hero_2.jpg")
+        self.assertEqual(livewall._original_hero(src), src)
+        self.assertEqual(livewall._original_hero(None), None)
+
+    def test_missing_source_keeps_upscaled(self):
+        up = os.path.join(self.dir, "hero_9_upscaled_x.png")
+        self.assertEqual(livewall._original_hero(up), up)
+
+    def test_maybe_generate_hashes_the_original(self):
+        # given an upscaled path, the cache key + upload come from the
+        # original file (same key a raw-hero run would compute)
+        from PIL import Image
+        src = os.path.join(self.dir, "hero_1.png")
+        Image.new("RGB", (16, 16), (1, 2, 3)).save(src)
+        up = os.path.join(self.dir, "hero_1_upscaled_comfy-x.png")
+        Image.new("RGB", (64, 64), (9, 9, 9)).save(up)
+        with mock.patch.object(livewall, "generate") as gen:
+            gen.return_value = None
+            livewall.maybe_generate(self.cfg, up, {}, "440", "T", "",
+                                    lambda m: None)
+        self.assertEqual(gen.call_args[0][1], src)
+
+
 class TestLiveWallQueue(LiveWallFixture):
     def setUp(self):
         super().setUp()

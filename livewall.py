@@ -786,6 +786,26 @@ def apply_we(cfg, project_path, hero_device, log=print):
 
 # ------------------------------------------------------------ orchestration
 
+def _original_hero(path):
+    """Video generation wants the ORIGINAL art, not an upscaled variant
+    (huge uploads, and the workflow downsamples to its output size anyway).
+    Maps hero_N_upscaled_<provider>-<hash>.<ext> back to hero_N.<ext>.
+    Returns the input unchanged when it isn't an upscaled variant or no
+    source file exists."""
+    if not path:
+        return path
+    name = os.path.basename(path)
+    if "_upscaled" not in name:
+        return path
+    stem = name.split("_upscaled")[0]
+    folder = os.path.dirname(path)
+    for ext in (".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"):
+        cand = os.path.join(folder, stem + ext)
+        if os.path.isfile(cand):
+            return cand
+    return path
+
+
 def reapply_cached(cfg, cache_key, pal, hero_device, log=print):
     """Gallery re-apply: hand Wallpaper Engine the newest cached video for
     this theme (or generate one when the feature is on and none exists
@@ -832,6 +852,7 @@ def maybe_generate(cfg, hero, context, cache_key, theme_title, hero_device,
     lw = cfg.get("livewall", {})
     if not (lw.get("enabled") and lw.get("provider") == "comfy"):
         return
+    hero = _original_hero(hero)
     if not hero or not os.path.exists(hero):
         return
     try:
@@ -846,6 +867,8 @@ def maybe_generate(cfg, hero, context, cache_key, theme_title, hero_device,
         proj = install(cfg, dst, cache_key, theme_title, hero, log)
         apply_we(cfg, proj, hero_device, log)
         return
+    log(f"  [livewall] source art: {os.path.basename(hero)} "
+        f"(original hero, not the upscale)")
     job = {"src": hero, "dst": dst, "context": context or {},
            "cache_key": cache_key, "theme_title": theme_title, "hero": hero}
     out = generate(cfg, hero, dst, context, log)
