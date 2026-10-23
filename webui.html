@@ -417,6 +417,9 @@
     and the loop returns to the art. <b>Topaz note:</b> the default ships with the video-upscale
     node OFF — flipping <code>enable_upscale</code> on spends Topaz credits per video.</p>
   <div class="row">
+    <div class="switch"><input type="checkbox" id="lwAllHeroes"><span>Make a video for <b>every</b> hero image (rotation swaps between them)</span></div>
+  </div>
+  <div class="row">
     <div class="switch"><input type="checkbox" id="lwDefer"><span>While a game is running, queue the video and generate it when you stop playing</span></div>
   </div>
   <div class="row">
@@ -781,6 +784,7 @@ async function load() {
   setV("lwProvider", lw.provider || "comfy");
   setV("lwHost", lw.host || "127.0.0.1"); setV("lwPort", lw.port ?? 8188);
   setV("lwWorkflow", lw.workflow || "");
+  setC("lwAllHeroes", lw.all_heroes !== false);
   setC("lwDefer", lw.defer_while_gaming !== false);
   setV("lwTimeout", lw.timeout_seconds ?? 3600);
   setV("lwMonitor", String(lw.we_monitor ?? -1));
@@ -860,6 +864,7 @@ async function save(apply) {
                   provider: v("lwProvider") || "comfy",
                   host: v("lwHost") || "127.0.0.1",
                   port: Math.min(65535, Math.max(1, parseInt(v("lwPort")) || 8188)),
+                  all_heroes: document.getElementById("lwAllHeroes").checked,
                   defer_while_gaming: document.getElementById("lwDefer").checked,
                   timeout_seconds: Math.min(21600, Math.max(60, parseInt(v("lwTimeout")) || 3600))};
   const lwm = parseInt(v("lwMonitor"));

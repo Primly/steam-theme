@@ -47,6 +47,7 @@ _VIDEO_SAVERS = {"SaveVideo", "VHS_VideoCombine", "SaveAnimatedWEBP",
 _VIDEO_EXTS = (".mp4", ".webm", ".mkv", ".mov", ".gif")
 _HOST_RE = __import__("re").compile(r"^[A-Za-z0-9.\-]+$")
 _queue_lock = threading.Lock()
+_draining = False  # a background drain worker is running
 
 
 def default_workflow():
@@ -391,9 +392,24 @@ def enqueue(cfg, job):
     return True
 
 
-def drain_queue(cfg, log=print):
-    """Run queued video jobs once the GPU is free. Returns [(cache_key,
-    theme_title, project_path)] for finished jobs. Never raises."""
+def _current_identity(cfg):
+    """The cache key of the theme currently on screen (hold wins)."""
+    try:
+        import main as app
+        st = app.load_state(cfg)
+    except Exception:
+        return ""
+    hold = st.get("manual_hold")
+    if isinstance(hold, dict) and hold.get("identity"):
+        return str(hold["identity"])
+    return str(st.get("last_cache_key") or "")
+
+
+def drain_queue(cfg, log=print, max_jobs=1):
+    """Run up to max_jobs queued video jobs (one by default — a single
+    clip can take an hour). Applies the result when it belongs to the
+    theme on screen. Returns [(cache_key, theme_title, project_path)].
+    Never raises."""
     lw = cfg.get("livewall", {})
     if not (lw.get("enabled") and lw.get("provider") == "comfy"):
         return []
@@ -416,31 +432,77 @@ def drain_queue(cfg, log=print):
             "unreachable")
         return []
     done, remaining = [], []
-    for job in q:
+    for n, job in enumerate(q):
+        if n >= max_jobs:
+            remaining.append(job)
+            continue
         out = None
         try:
-            out = generate(cfg, job["src"], job["dst"], job.get("context"),
-                           log, defer=False)
+            out = generate(cfg, job["src"], job["dst"],
+                           job.get("context"), log, defer=False)
         except Exception as e:
             log(f"  [livewall] queue job error: {e}")
-        if out:
-            proj = install(cfg, job["dst"], job.get("cache_key") or "",
-                          job.get("theme_title") or "", job.get("hero") or "",
-                          log)
-            done.append((job.get("cache_key") or "", job.get("theme_title"),
-                         proj))
-        else:
+        if not out:
             job["attempts"] = int(job.get("attempts") or 0) + 1
             if job["attempts"] >= 3:
-                log("  [livewall] dropping video job after 3 failed attempts")
+                log("  [livewall] dropping video job after 3 failed "
+                    "attempts")
             else:
                 remaining.append(job)
+            continue
+        key = job.get("cache_key") or ""
+        title = job.get("theme_title") or ""
+        proj = install(cfg, job["dst"], key, title, job.get("hero") or "",
+                       log)
+        done.append((key, title, proj))
+        if key and key == _current_identity(cfg):
+            log("  [livewall] video ready for the theme on screen — "
+                "applying it")
+            apply_we(cfg, proj, _hero_device(cfg), log)
+        elif key:
+            log(f"  [livewall] video ready for '{title}' (kept cached; "
+                "applies next time that theme is on screen)")
     with _queue_lock:
         tmp = _queue_file(cfg) + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(remaining, f, indent=2)
         os.replace(tmp, _queue_file(cfg))
     return done
+
+
+def start_drain(cfg, log=print):
+    """Kick a background drain (non-blocking, single-flight) so the
+    service loop stays responsive while a clip renders for an hour."""
+    global _draining
+    with _queue_lock:
+        if _draining:
+            return False
+        _draining = True
+
+    def work():
+        global _draining
+        try:
+            drain_queue(cfg, log, max_jobs=1)
+        except Exception as e:  # never kill the worker silently
+            log(f"  [livewall] drain worker error: {e}")
+        finally:
+            with _queue_lock:
+                _draining = False
+
+    threading.Thread(target=work, daemon=True).start()
+    return True
+
+
+def _hero_device(cfg):
+    """Best-effort hero display device for WE monitor mapping."""
+    try:
+        import theme as theme_mod
+        mons = theme_mod.assign_roles(theme_mod.enumerate_monitors(),
+                                      cfg.get("monitors", []),
+                                      lambda m: None)
+        return next((m["device"] for m in mons if m["role"] == "hero"), "")
+    except Exception:
+        return ""
 
 
 # ---------------------------------------------------------------- generate
@@ -822,6 +884,7 @@ def reapply_cached(cfg, cache_key, pal, hero_device, log=print):
             apply_we(cfg, newest, hero_device, log)
             return
     hero = None
+    art = None
     try:
         art = artwork_from_cache(os.path.join(
             cfg.get("cache_dir") or "cache", str(cache_key)))
@@ -835,7 +898,9 @@ def reapply_cached(cfg, cache_key, pal, hero_device, log=print):
            "mood": (pal or {}).get("mood") or "",
            "appearance": (pal or {}).get("appearance") or "dark",
            "palette_mode": (pal or {}).get("mode") or "colorful"}
-    maybe_generate(cfg, hero, ctx, cache_key,
+    heroes = [hero] + [c for c in ((art or {}).get("hero_candidates") or [])
+                       if isinstance(c, str) and c != hero]
+    maybe_generate(cfg, heroes, ctx, cache_key,
                    (pal or {}).get("theme_name") or str(cache_key),
                    hero_device, log)
 
@@ -845,54 +910,143 @@ def artwork_from_cache(cache_dir):
     return artwork.art_from_cache(cache_dir)
 
 
-def maybe_generate(cfg, hero, context, cache_key, theme_title, hero_device,
-                   log=print):
-    """Called from the theme pipeline: generate (or reuse) the looping video
-    for the current hero and hand it to Wallpaper Engine."""
-    lw = cfg.get("livewall", {})
-    if not (lw.get("enabled") and lw.get("provider") == "comfy"):
-        return
+def _hero_list(cfg, heroes):
+    """Normalize to distinct, existing ORIGINAL hero paths. all_heroes
+    set to false limits it to the active hero only. Returns [] when
+    nothing usable."""
+    if isinstance(heroes, str):
+        heroes = [heroes]
+    out, seen = [], set()
+    for h in heroes or []:
+        if not isinstance(h, str):
+            continue
+        h = _original_hero(h)
+        if not h or not os.path.exists(h) or h in seen:
+            continue
+        seen.add(h)
+        out.append(h)
+    if not cfg.get("livewall", {}).get("all_heroes", True):
+        out = out[:1]
+    return out
+
+
+def _hero_target(cfg, hero, cache_key):
+    """(hash10, project_dir, video_path) for a hero's looping video."""
+    with open(hero, "rb") as f:
+        h = hashlib.sha1(f.read()).hexdigest()[:10]
+    d = os.path.join(cfg.get("cache_dir") or "cache", str(cache_key),
+                     "livewall", h)
+    return h, d, os.path.join(d, "wallpaper.mp4")
+
+
+def apply_for_hero(cfg, hero, cache_key, theme_title, hero_device, log=print):
+    """Hand this hero's cached video to Wallpaper Engine (installing the
+    project first when needed). True when a video existed."""
     hero = _original_hero(hero)
     if not hero or not os.path.exists(hero):
-        return
+        return False
     try:
-        with open(hero, "rb") as f:
-            h = hashlib.sha1(f.read()).hexdigest()[:10]
+        _h, _d, dst = _hero_target(cfg, hero, cache_key)
     except OSError:
-        return
-    proj_dir = os.path.join(cfg.get("cache_dir") or "cache",
-                            str(cache_key), "livewall", h)
-    dst = os.path.join(proj_dir, "wallpaper.mp4")
-    if os.path.exists(dst):
-        proj = install(cfg, dst, cache_key, theme_title, hero, log)
-        apply_we(cfg, proj, hero_device, log)
-        return
-    log(f"  [livewall] source art: {os.path.basename(hero)} "
-        f"(original hero, not the upscale)")
-    job = {"src": hero, "dst": dst, "context": context or {},
-           "cache_key": cache_key, "theme_title": theme_title, "hero": hero}
-    out = generate(cfg, hero, dst, context, log)
-    if out:
-        proj = install(cfg, dst, cache_key, theme_title, hero, log)
-        apply_we(cfg, proj, hero_device, log)
-    # generate() enqueues when deferred; annotate the queued job so the
-    # drain can install + apply it with full context. Only ONE video job
-    # per game is kept — a refetch may change the hero (and its content
-    # hash), and only the newest job describes the current art.
+        return False
+    if not os.path.exists(dst):
+        return False
+    proj = install(cfg, dst, cache_key, theme_title, hero, log)
+    apply_we(cfg, proj, hero_device, log)
+    return True
+
+
+def sync_queue(cfg, cache_key, jobs):
+    """Make the deferred queue match this game's hero set: drop jobs whose
+    art no longer exists (a refetch changes hashes), add the missing ones.
+    Returns how many were added."""
+    wanted = {j["dst"]: j for j in jobs}
     with _queue_lock:
         try:
             with open(_queue_file(cfg), encoding="utf-8") as f:
                 q = json.load(f)
         except (OSError, json.JSONDecodeError):
             q = []
-        q = [j for j in q if isinstance(j, dict)
-             and not (j.get("cache_key") == cache_key
-                      and j.get("dst") != dst)]
-        for j in q:
-            if j.get("dst") == dst:
-                j.update({"cache_key": cache_key,
-                          "theme_title": theme_title})
+        if not isinstance(q, list):
+            q = []
+        existing = {j.get("dst") for j in q if isinstance(j, dict)}
+        # stale entries for this game (old art) go away; other games stay
+        q = [j for j in q if not (isinstance(j, dict)
+                                  and j.get("cache_key") == cache_key
+                                  and j.get("dst") not in wanted)]
+        added = 0
+        for dst, job in wanted.items():
+            if dst in existing:
+                continue
+            q.append(job)
+            added += 1
         tmp = _queue_file(cfg) + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(q, f, indent=2)
         os.replace(tmp, _queue_file(cfg))
+    return added
+
+
+def maybe_generate(cfg, heroes, context, cache_key, theme_title,
+                   hero_device, log=print):
+    """Theme-pipeline hook: make sure EVERY hero candidate has a looping
+    video, put a ready one on the wallpaper, and queue the rest.
+
+    Generation never happens here — a clip can take an hour, so the
+    background drain worker renders queued heroes one at a time (gated on
+    gaming / ComfyUI availability)."""
+    lw = cfg.get("livewall", {})
+    if not (lw.get("enabled") and lw.get("provider") == "comfy"):
+        return
+    hs = _hero_list(cfg, heroes)
+    if not hs:
+        return
+    jobs, cached = [], 0
+    for hero in hs:
+        try:
+            _h, _d, dst = _hero_target(cfg, hero, cache_key)
+        except OSError:
+            continue
+        if os.path.exists(dst):
+            cached += 1
+            continue
+        jobs.append({"src": hero, "dst": dst, "context": context or {},
+                     "cache_key": cache_key, "theme_title": theme_title,
+                     "hero": hero, "attempts": 0})
+    if jobs:
+        added = sync_queue(cfg, cache_key, jobs)
+        log(f"  [livewall] hero videos: {len(jobs)} to make "
+            f"({cached} cached, {added} queued now) — original art, one at "
+            "a time in the background")
+    # a ready video for the active hero goes straight onto the wallpaper
+    if apply_for_hero(cfg, hs[0], cache_key, theme_title, hero_device, log):
+        log(f"  [livewall] applied cached video for "
+            f"{os.path.basename(hs[0])}")
+
+
+def rotate_step(cfg, candidates, cache_key, theme_title, hero_device,
+                log=print):
+    """Rotation tick: switch the WE wallpaper to the next hero candidate
+    that already has a video. Returns the hero path applied, or None."""
+    hs = _hero_list(cfg, candidates)
+    if len(hs) < 2:
+        return None
+    try:
+        import main as app
+        st = app.load_state(cfg)
+    except Exception:
+        return None
+    rot = st.get("livewall_rotate")
+    rot = rot if isinstance(rot, dict) else {}
+    idx = int(rot.get("index") or 0) if str(
+        rot.get("cache_key") or "") == str(cache_key) else 0
+    for off in range(1, len(hs) + 1):
+        j = (idx + off) % len(hs)
+        if apply_for_hero(cfg, hs[j], cache_key, theme_title, hero_device,
+                          log):
+            st["livewall_rotate"] = {"cache_key": str(cache_key),
+                                     "index": j, "at": time.time()}
+            app.save_state(cfg, st)
+            log(f"  [livewall] rotated to hero {j + 1}/{len(hs)}")
+            return hs[j]
+    return None

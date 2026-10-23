@@ -36,7 +36,7 @@ else:
     import linux_theme as theme_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-__version__ = "1.9.3"
+__version__ = "1.9.4"
 
 
 def safe_join(base, *parts):
@@ -253,10 +253,15 @@ def run_pipeline(cfg, game, log, dry_run=False):
     # any custom keys the user's naming prompt asks for) can steer
     # generative Topaz models via prompt placeholders
     up_ctx = _upscale_context(name, pal, ai, cfg)
-    # the live-wallpaper video uses the ORIGINAL hero art: video diffusion
+    # the live-wallpaper videos use the ORIGINAL hero art: video diffusion
     # downsamples to the workflow's output size anyway, and a 5120px upscale
-    # is pure upload/wait overhead
+    # is pure upload/wait overhead. EVERY candidate gets a video (rotate
+    # mode eventually shows each one); active hero first for the initial apply.
     video_hero = art.get("hero")
+    video_candidates = [video_hero] if video_hero else []
+    for _c in (art.get("hero_candidates") or []):
+        if isinstance(_c, str) and _c not in video_candidates:
+            video_candidates.append(_c)
     upscale_toward_monitors(cfg, art, monitors, name, log, up_ctx)
     # re-derive after the upscale pass: rotate mode swaps candidate paths for
     # their upscaled versions, which Stage 4 composes into slide variants
@@ -335,7 +340,7 @@ def run_pipeline(cfg, game, log, dry_run=False):
     extras.apply_rgb(cfg, pal, log)
     # optional looping-video wallpaper (ComfyUI -> Wallpaper Engine);
     # reuses the upscaler's VLM placeholder context
-    livewall.maybe_generate(cfg, video_hero, up_ctx, cache_key,
+    livewall.maybe_generate(cfg, video_candidates, up_ctx, cache_key,
                             theme_name,
                             next((m["device"] for m in monitors
                                   if m["role"] == "hero"), ""), log)
@@ -407,6 +412,46 @@ def reapply_from_cache(cfg, log, cache_key):
     except ValueError:
         pass
     save_state(cfg, state)
+
+
+def _livewall_rotation_tick(cfg, log):
+    """Swap the applied WE video across hero candidates on the theme's
+    rotation interval. Windows' own wallpaper slideshow is pinned to
+    Picture (so WE's animated layer isn't repainted), which means the
+    video rotation has to be driven from here."""
+    hs = _hero_settings(cfg)
+    if hs["mode"] != "rotate":
+        return
+    st = load_state(cfg)
+    key = str(st.get("last_cache_key") or "")
+    if not key:
+        return
+    rot = st.get("livewall_rotate")
+    rot = rot if isinstance(rot, dict) else {}
+    if str(rot.get("cache_key") or "") == key:
+        try:
+            last = float(rot.get("at") or 0)
+        except (TypeError, ValueError):
+            last = 0.0
+        if time.time() - last < hs["interval_minutes"] * 60:
+            return
+    cache = os.path.join(cfg_path(cfg, "cache_dir", "cache"), key)
+    art = artwork.art_from_cache(cache) or {}
+    candidates = [c for c in (art.get("hero_candidates") or [])
+                  if isinstance(c, str)]
+    if len(candidates) < 2:
+        return
+    title = key
+    try:
+        with open(os.path.join(cache, "palette.json"),
+                  encoding="utf-8") as f:
+            title = json.load(f).get("theme_name") or key
+    except (OSError, json.JSONDecodeError):
+        pass
+    mon = theme_mod.assign_roles(theme_mod.enumerate_monitors(),
+                                 cfg.get("monitors", []), lambda m: None)
+    hero_dev = next((m["device"] for m in mon if m["role"] == "hero"), "")
+    livewall.rotate_step(cfg, candidates, key, title, hero_dev, log)
 
 
 def _ufetch_upscale(cfg, art, monitors, name, log):
@@ -792,17 +837,10 @@ def main():
                 check_once(cfg, log, force=True)
                 time.sleep(interval)
                 continue
-            # deferred live-wallpaper videos: apply the finished one if
-            # it belongs to the theme currently on screen
-            for key, _title, proj in livewall.drain_queue(cfg, log):
-                if proj and key == current:
-                    mon = theme_mod.assign_roles(
-                        theme_mod.enumerate_monitors(),
-                        cfg.get("monitors", []), lambda m: None)
-                    hero_dev = next((m["device"] for m in mon
-                                     if m["role"] == "hero"), "")
-                    log("livewall queue: applying the finished video")
-                    livewall.apply_we(cfg, proj, hero_dev, log)
+            # live-wallpaper renders run in a background worker (a clip can
+            # take an hour) so this poller stays responsive
+            livewall.start_drain(cfg, log)
+            _livewall_rotation_tick(cfg, log)
             check_once(cfg, log)
         except Exception as e:
             log(f"poll error: {e}")

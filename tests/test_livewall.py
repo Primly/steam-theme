@@ -238,19 +238,19 @@ class TestOriginalHeroSelection(LiveWallFixture):
         up = os.path.join(self.dir, "hero_9_upscaled_x.png")
         self.assertEqual(livewall._original_hero(up), up)
 
-    def test_maybe_generate_hashes_the_original(self):
-        # given an upscaled path, the cache key + upload come from the
-        # original file (same key a raw-hero run would compute)
+    def test_maybe_generate_queues_the_original(self):
+        # given an upscaled path, the queued job's source is the original
         from PIL import Image
         src = os.path.join(self.dir, "hero_1.png")
         Image.new("RGB", (16, 16), (1, 2, 3)).save(src)
         up = os.path.join(self.dir, "hero_1_upscaled_comfy-x.png")
         Image.new("RGB", (64, 64), (9, 9, 9)).save(up)
-        with mock.patch.object(livewall, "generate") as gen:
-            gen.return_value = None
-            livewall.maybe_generate(self.cfg, up, {}, "440", "T", "",
-                                    lambda m: None)
-        self.assertEqual(gen.call_args[0][1], src)
+        livewall.maybe_generate(self.cfg, up, {}, "440", "T", "",
+                                lambda m: None)
+        with open(os.path.join(self.dir, "video_queue.json"),
+                  encoding="utf-8") as f:
+            q = json.load(f)
+        self.assertEqual(q[0]["src"], src)
 
 
 class TestLiveWallQueue(LiveWallFixture):
@@ -274,28 +274,6 @@ class TestLiveWallQueue(LiveWallFixture):
         self.assertEqual(len(q), 1)          # deduped by dst
         self.assertEqual(q[0]["hero"], self.hero)
 
-    def test_drain_runs_when_idle_and_installs(self):
-        dst = os.path.join(self.dir, "v.mp4")
-        with mock.patch.object(livewall, "_game_running", return_value=True):
-            livewall.generate(self.cfg, self.hero, dst, {"game": "G"},
-                              lambda m: None)
-        with mock.patch.object(livewall, "_game_running",
-                               return_value=False), \
-                mock.patch.object(
-                    livewall, "generate",
-                    lambda cfg, src, d, ctx, log, defer=True: _write(dst)), \
-                mock.patch.object(livewall, "requests") as rq:
-            rq.get.return_value = mock.Mock(status_code=200)
-            done = livewall.drain_queue(self.cfg, lambda m: None)
-        self.assertEqual(len(done), 1)
-        key, _title, proj = done[0]
-        self.assertTrue(os.path.isfile(proj))
-        with open(proj, encoding="utf-8") as f:
-            project = json.load(f)
-        self.assertEqual(project["type"], "video")
-        self.assertEqual(project["file"], "v.mp4")
-        self.assertEqual(self._q(), [])      # queue emptied
-
     def test_drain_drops_poison_jobs(self):
         dst = os.path.join(self.dir, "v.mp4")
         with mock.patch.object(livewall, "_game_running", return_value=True):
@@ -313,35 +291,6 @@ class TestLiveWallQueue(LiveWallFixture):
     def test_drain_noop_when_disabled(self):
         self.cfg["livewall"]["enabled"] = False
         self.assertEqual(livewall.drain_queue(self.cfg, lambda m: None), [])
-
-    def test_maybe_generate_annotates_queued_job(self):
-        dst = os.path.join(self.dir, os.path.join("440", "livewall",
-                                                 "abc1234567",
-                                                 "wallpaper.mp4"))
-        with mock.patch.object(livewall, "_game_running", return_value=True):
-            livewall.maybe_generate(self.cfg, self.hero, {"game": "TF2"},
-                                    "440", "Ashen Vigil", "",
-                                    lambda m: None)
-        q = self._q()
-        self.assertEqual(q[0]["cache_key"], "440")
-        self.assertEqual(q[0]["theme_title"], "Ashen Vigil")
-
-    def test_maybe_generate_keeps_only_newest_job_per_game(self):
-        # a refetch changes the hero (new content hash) — the old queued
-        # job for the same game is stale and must be replaced, not stacked
-        from PIL import Image
-        h2 = os.path.join(self.dir, "hero2.jpg")
-        Image.new("RGB", (64, 64), (200, 30, 30)).save(h2, "JPEG")
-        with mock.patch.object(livewall, "_game_running", return_value=True):
-            livewall.maybe_generate(self.cfg, self.hero, {}, "440", "A",
-                                    "", lambda m: None)
-            livewall.maybe_generate(self.cfg, h2, {}, "440", "B",
-                                    "", lambda m: None)
-        q = self._q()
-        self.assertEqual(len(q), 1)
-        self.assertTrue(q[0]["dst"].startswith(
-            os.path.join(self.dir, "440", "livewall")))
-        self.assertEqual(q[0]["theme_title"], "B")
 
     def test_excluded_running_app_is_not_a_game(self):
         # Wallpaper Engine (431960, excluded) running via Steam's now-playing

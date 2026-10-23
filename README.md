@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.9.3-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.9.4-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -328,7 +328,7 @@ UI takes effect without restarts.
 | `topaz.api_key` / `model` / `creativity` / `prompt` / `models` | — | Topaz settings; `models.hero/logo/icon` override per role |
 | `comfy.host` / `port` / `workflow` / `workflows` / `defer_while_gaming` / `timeout_seconds` | `127.0.0.1` / `8188` / built-in / — / `true` / `900` | Local ComfyUI upscaling; `workflow` = Export-API JSON (empty = built-in Ultimate SD Upscale default); `workflows.hero/logo/icon` override per role; jobs defer to a queue while a game runs |
 | `ai.upscale_model` | `ai.model` | Model for the `ai` images provider |
-| `livewall.enabled` / `provider` / `host` / `port` / `workflow` / `defer_while_gaming` / `timeout_seconds` / `we_monitor` | `false` / `comfy` / `127.0.0.1` / `8188` / built-in / `true` / `3600` / `-1` | Looping-video wallpaper: ComfyUI video workflow (empty = built-in LTX-2.5 default; graph saves accepted), queued while gaming; `we_monitor` -1 = hero display, else a WE monitor index |
+| `livewall.enabled` / `provider` / `host` / `port` / `workflow` / `all_heroes` / `defer_while_gaming` / `timeout_seconds` / `we_monitor` | `false` / `comfy` / `127.0.0.1` / `8188` / built-in / `true` / `true` / `3600` / `-1` | Looping-video wallpaper: ComfyUI video workflow (empty = built-in LTX-2.5 default; graph saves accepted), one clip per hero candidate (`all_heroes`: every candidate, rotated on the theme interval), queued while gaming; `we_monitor` -1 = hero display, else a WE monitor index |
 | `signalrgb.*` (Windows) | — | `enabled`, `base_url`, `custom_effect`, `effect_style`, `effect_scope` (`per_game`/`single`), `effects_dir`, `fallback_effect` |
 | `windows_terminal.*` (Windows) | — | `enabled`, `set_background_image`, `background_opacity` |
 | `konsole.*` (Linux) | — | `enabled`, `set_default_profile` |
@@ -529,6 +529,11 @@ display:
 - **Defer while gaming** (default on): generation queues while a game runs
   and drains when you stop — one video takes minutes of GPU, so it never
   fights your game for it.
+- **Every hero gets a video.** In rotate mode all candidates are queued
+  (one clip at a time, in the background — the pipeline never blocks for
+  an hour) and the rotation interval swaps the Wallpaper Engine video
+  between them. Turn *Make a video for every hero image* off to limit it
+  to the active one.
 - **Cached per hero**: one video per hero image (content-hashed) under
   `cache/<game>/livewall/`, never re-generated — delete its folder to force
   a redo. *Full refetch* wipes them with the rest of the cache.
@@ -703,7 +708,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 209 tests
+python -m unittest discover -s tests -v   # 220 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -748,6 +753,15 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.9.4** — **a video for every hero image**: in rotate mode every hero
+  candidate now gets its own looping clip (queued and rendered one at a
+  time by a background worker, so a theme apply never blocks for an hour),
+  and the rotation interval swaps the Wallpaper Engine video between them —
+  necessary because the Windows wallpaper slideshow is pinned to Picture
+  for WE coexistence. The queue is reconciled per game: stale jobs from old
+  art are pruned and missing heroes queued. `livewall.all_heroes` (UI
+  toggle, default on) limits it to the active hero. 11 new tests (220
+  total).
 - **1.9.3** — **live wallpapers use the original hero art**: the video
   stage no longer uploads the upscaled hero (a 5120 px image is a slow
   upload and gets downsampled to the workflow's output size regardless).
