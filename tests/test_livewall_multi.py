@@ -18,6 +18,15 @@ def _mp4_bytes():
     return b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 2048
 
 
+def fake_get(url, **kw):
+    """ComfyUI up + idle queue."""
+    if url.endswith("/queue"):
+        return mock.Mock(status_code=200,
+                         json=lambda: {"queue_running": [],
+                                       "queue_pending": []})
+    return mock.Mock(status_code=200, json=lambda: {})
+
+
 class MultiHeroFixture(unittest.TestCase):
     def setUp(self):
         from PIL import Image
@@ -119,7 +128,7 @@ class TestDrainWorker(MultiHeroFixture):
                 mock.patch.object(livewall, "requests") as rq, \
                 mock.patch.object(livewall, "generate") as gen, \
                 mock.patch.object(livewall, "apply_we"):
-            rq.get.return_value = mock.Mock(status_code=200)
+            rq.get.side_effect = fake_get
 
             def fake(cfg, src, dst, ctx, log, defer=True):
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -139,7 +148,7 @@ class TestDrainWorker(MultiHeroFixture):
                 mock.patch.object(livewall, "requests") as rq, \
                 mock.patch.object(livewall, "generate") as gen, \
                 mock.patch.object(livewall, "apply_we") as apply:
-            rq.get.return_value = mock.Mock(status_code=200)
+            rq.get.side_effect = fake_get
 
             def fake(cfg, src, dst, ctx, log, defer=True):
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -158,7 +167,7 @@ class TestDrainWorker(MultiHeroFixture):
                 mock.patch.object(livewall, "requests") as rq, \
                 mock.patch.object(livewall, "generate") as gen, \
                 mock.patch.object(livewall, "apply_we") as apply:
-            rq.get.return_value = mock.Mock(status_code=200)
+            rq.get.side_effect = fake_get
 
             def fake(cfg, src, dst, ctx, log, defer=True):
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -169,6 +178,23 @@ class TestDrainWorker(MultiHeroFixture):
             done = livewall.drain_queue(self.cfg, self.log)
         apply.assert_not_called()
         self.assertEqual(len(done), 1)   # cached and reported
+
+    def test_busy_comfy_queue_is_left_alone(self):
+        # don't inject an hour-long render into someone else's ComfyUI work
+        def busy(url, **kw):
+            if url.endswith("/queue"):
+                return mock.Mock(status_code=200,
+                                 json=lambda: {"queue_running": [[1]],
+                                               "queue_pending": []})
+            return mock.Mock(status_code=200, json=lambda: {})
+        with mock.patch.object(livewall, "_game_running",
+                               return_value=False), \
+                mock.patch.object(livewall, "requests") as rq, \
+                mock.patch.object(livewall, "generate") as gen:
+            rq.get.side_effect = busy
+            self.assertEqual(livewall.drain_queue(self.cfg, self.log), [])
+        gen.assert_not_called()
+        self.assertEqual(len(self.q()), 3)
 
     def test_gaming_defers_the_worker(self):
         with mock.patch.object(livewall, "_game_running", return_value=True):

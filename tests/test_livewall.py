@@ -283,7 +283,7 @@ class TestLiveWallQueue(LiveWallFixture):
                 mock.patch.object(livewall, "generate",
                                   lambda *a, **k: None), \
                 mock.patch.object(livewall, "requests") as rq:
-            rq.get.return_value = mock.Mock(status_code=200)
+            rq.get.side_effect = _idle_get
             for _ in range(3):
                 livewall.drain_queue(self.cfg, lambda m: None)
         self.assertEqual(self._q(), [])
@@ -310,6 +310,14 @@ class TestLiveWallQueue(LiveWallFixture):
                                    lambda: 570):
                 self.assertTrue(upscale._game_running(
                     {"exclude_appids": [431960]}))
+
+
+def _idle_get(url, **kw):
+    if url.endswith("/queue"):
+        return mock.Mock(status_code=200,
+                         json=lambda: {"queue_running": [],
+                                       "queue_pending": []})
+    return mock.Mock(status_code=200, json=lambda: {})
 
 
 def _write(dst):

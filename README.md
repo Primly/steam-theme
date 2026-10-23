@@ -708,7 +708,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 220 tests
+python -m unittest discover -s tests -v   # 221 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -760,8 +760,9 @@ CI. Platform-specific tests skip cleanly on the other OS.
   necessary because the Windows wallpaper slideshow is pinned to Picture
   for WE coexistence. The queue is reconciled per game: stale jobs from old
   art are pruned and missing heroes queued. `livewall.all_heroes` (UI
-  toggle, default on) limits it to the active hero. 11 new tests (220
-  total).
+  toggle, default on) limits it to the active hero. The drain also
+  stands off while ComfyUI already has someone else's work queued. 12 new
+  tests (221 total).
 - **1.9.3** — **live wallpapers use the original hero art**: the video
   stage no longer uploads the upscaled hero (a 5120 px image is a slow
   upload and gets downsampled to the workflow's output size regardless).

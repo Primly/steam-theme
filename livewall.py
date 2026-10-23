@@ -427,6 +427,13 @@ def drain_queue(cfg, log=print, max_jobs=1):
         r = requests.get(_base(cfg) + "/system_stats", timeout=5)
         if r.status_code != 200:
             raise requests.RequestException("bad status")
+        # don't inject an hour-long render into someone else's ComfyUI
+        # work — wait until its queue is empty
+        qq = requests.get(_base(cfg) + "/queue", timeout=5)
+        if qq.status_code == 200:
+            qj = qq.json() or {}
+            if (qj.get("queue_running") or qj.get("queue_pending")):
+                return []
     except Exception:
         log(f"  [livewall] {len(q)} video job(s) queued but ComfyUI is "
             "unreachable")
