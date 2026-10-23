@@ -52,6 +52,16 @@
     "defer_while_gaming": true,
     "timeout_seconds": 900
   },
+  "livewall": {
+    "enabled": false,
+    "provider": "comfy",
+    "host": "127.0.0.1",
+    "port": 8188,
+    "workflow": "",
+    "defer_while_gaming": true,
+    "timeout_seconds": 3600,
+    "we_monitor": -1
+  },
 
   "signalrgb": {
     "enabled": false,

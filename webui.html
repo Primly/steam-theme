@@ -378,6 +378,70 @@
 </section>
 
 <section>
+  <h2>Live wallpaper</h2>
+  <p class="hint">Generate a short looping video from the hero art (ComfyUI) and set it as an
+    animated Wallpaper Engine background on the hero display. One video per theme, cached —
+    generation takes minutes and queues while you play.</p>
+  <div class="row">
+    <div class="switch"><input type="checkbox" id="lwEnabled"><span>Generate looping wallpaper videos</span></div>
+  </div>
+  <div class="row">
+    <label for="lwProvider">Provider</label>
+    <select id="lwProvider">
+      <option value="comfy">ComfyUI (local — your GPU)</option>
+    </select>
+  </div>
+  <div id="lwBlock">
+  <div class="row">
+    <label for="lwHost">Host</label>
+    <input id="lwHost" placeholder="127.0.0.1">
+    <label for="lwPort" style="min-width:0">port</label>
+    <input id="lwPort" type="number" min="1" max="65535" placeholder="8188" style="width:90px">
+    <button onclick="runTest('livewall', {host: v('lwHost'), port: v('lwPort'), workflow: v('lwWorkflow')}, 'lwResult')">Test</button>
+    <div class="result" id="lwResult"></div>
+  </div>
+  <div class="row">
+    <label for="lwWorkflow" class="top">Video workflow (Export API JSON, or a normal ComfyUI save)</label>
+    <textarea id="lwWorkflow" rows="10" spellcheck="false" placeholder="empty = the built-in LTX-2.5 looping default"></textarea>
+  </div>
+  <div class="row">
+    <button onclick="lwLoadDefault()">Show / edit the default workflow (large)</button>
+  </div>
+  <p class="hint">Paste any video workflow — the new ComfyUI save format works directly (subgraphs
+    are flattened automatically; only Dev-Mode Export API JSON worked before). The default is
+    LTX-2.5 first/last-frame looping with an optional Topaz video-upscale node. Placeholders:
+    <code>{game}</code>, <code>{role}</code>, <code>{mood}</code>, <code>{theme_name}</code>,
+    <code>{appearance}</code>, <code>{palette_mode}</code> + your naming prompt's custom keys — the default leans on <code>{loop_prompt}</code>:
+    ask your naming prompt's JSON for a <code>"loop_prompt"</code> key describing the game's ambient motion, and the VLM authors each video individually.
+    Every <code>LoadImage</code> node receives the hero image, so the first and last frames match
+    and the loop returns to the art. <b>Topaz note:</b> the default ships with the video-upscale
+    node OFF — flipping <code>enable_upscale</code> on spends Topaz credits per video.</p>
+  <div class="row">
+    <div class="switch"><input type="checkbox" id="lwDefer"><span>While a game is running, queue the video and generate it when you stop playing</span></div>
+  </div>
+  <div class="row">
+    <label for="lwTimeout">Generation timeout (seconds)</label>
+    <input id="lwTimeout" type="number" min="60" max="21600" step="60">
+  </div>
+  <div class="row">
+    <label for="lwMonitor">Wallpaper Engine monitor</label>
+    <select id="lwMonitor">
+      <option value="-1">Auto — follow the hero display</option>
+      <option value="0">Monitor 0</option>
+      <option value="1">Monitor 1</option>
+      <option value="2">Monitor 2</option>
+      <option value="3">Monitor 3</option>
+      <option value="4">Monitor 4</option>
+    </select>
+  </div>
+  <p class="hint">Videos live in <code>cache/&lt;game&gt;/livewall/</code> as Wallpaper Engine
+    projects, applied live when Wallpaper Engine is running or queued in its config for its next
+    launch. Delete a video's folder to force regeneration. The Wallpaper Engine apply is
+    Windows-only — on other platforms videos are still generated and cached.</p>
+  </div>
+</section>
+
+<section>
   <h2>Extras</h2>
   <p class="hint">Extend the theme beyond the desktop.</p>
   <div id="wtBlock">
@@ -495,6 +559,15 @@ const AI_DEFAULT_PROMPT = `This is key art from the game '{game}'. Its dominant 
 
 // Fetched from the server (upscale.DEFAULT_COMFY_WORKFLOW) — single source of truth
 let COMFY_DEFAULT_WORKFLOW = "";
+// Fetched lazily: the default video workflow is ~110 KB
+let LIVEWALL_DEFAULT_WORKFLOW = "";
+
+async function lwLoadDefault() {
+  if (!LIVEWALL_DEFAULT_WORKFLOW)
+    LIVEWALL_DEFAULT_WORKFLOW =
+      (await api("/api/livewall-default-workflow")).workflow || "";
+  setV("lwWorkflow", LIVEWALL_DEFAULT_WORKFLOW);
+}
 
 function providerChanged() {
   const p = v("upProvider");
@@ -703,6 +776,14 @@ async function load() {
   setC("comfyDefer", cm.defer_while_gaming !== false);
   setV("comfyTimeout", cm.timeout_seconds ?? 900);
   providerChanged();
+  const lw = cfg.livewall || {};
+  setC("lwEnabled", !!lw.enabled);
+  setV("lwProvider", lw.provider || "comfy");
+  setV("lwHost", lw.host || "127.0.0.1"); setV("lwPort", lw.port ?? 8188);
+  setV("lwWorkflow", lw.workflow || "");
+  setC("lwDefer", lw.defer_while_gaming !== false);
+  setV("lwTimeout", lw.timeout_seconds ?? 3600);
+  setV("lwMonitor", String(lw.we_monitor ?? -1));
   const wt = cfg.windows_terminal || {};
   setC("wtEnabled", wt.enabled); setC("wtBg", wt.set_background_image); setV("wtOpacity", wt.background_opacity ?? 0.25);
   const sg = cfg.signalrgb || {};
@@ -775,6 +856,17 @@ async function save(apply) {
   }
   if (Object.keys(cwOver).length) cfg.comfy.workflows = cwOver;
   else delete cfg.comfy.workflows;  // clearing all overrides must persist
+  cfg.livewall = {enabled: document.getElementById("lwEnabled").checked,
+                  provider: v("lwProvider") || "comfy",
+                  host: v("lwHost") || "127.0.0.1",
+                  port: Math.min(65535, Math.max(1, parseInt(v("lwPort")) || 8188)),
+                  defer_while_gaming: document.getElementById("lwDefer").checked,
+                  timeout_seconds: Math.min(21600, Math.max(60, parseInt(v("lwTimeout")) || 3600))};
+  const lwm = parseInt(v("lwMonitor"));
+  cfg.livewall.we_monitor = isNaN(lwm) ? -1 : lwm;
+  const lww = v("lwWorkflow").trim();
+  if (lww && lww !== LIVEWALL_DEFAULT_WORKFLOW) cfg.livewall.workflow = lww;
+  else delete cfg.livewall.workflow;  // empty/untouched default = built-in
   if (PLATFORM === "win32") {
     cfg.windows_terminal = {enabled: document.getElementById("wtEnabled").checked,
       set_background_image: document.getElementById("wtBg").checked,

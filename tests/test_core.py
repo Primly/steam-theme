@@ -360,6 +360,27 @@ class TestManualThemeHold(unittest.TestCase):
         self.assertEqual([g["appid"] for g in self.pipeline_calls], [570])
         self.assertNotIn("manual_hold", state)
 
+    def test_excluded_game_never_releases_hold(self):
+        # Wallpaper Engine (431960, excluded) reporting as last-played must
+        # NOT nuke a gallery hold — it's a utility, not a played game
+        self.cfg["exclude_appids"] = [431960]
+        games = [dict(self.GAMES[0]),
+                 dict(self.GAMES[1], appid=431960, name="Wallpaper Engine",
+                      rtime_last_played=self.hold_at + 60)]
+        with mock.patch.object(main.steamdetect, "get_owned_games",
+                               lambda k, s: games):
+            state = self._check()
+        self.assertEqual(self.pipeline_calls, [])
+        self.assertEqual(state["manual_hold"]["identity"], "440")
+        # even while actively running (now-playing), excluded stays inert
+        with mock.patch.object(main.steamdetect, "get_owned_games",
+                               lambda k, s: games), \
+                mock.patch.object(main.steamdetect, "get_running_appid",
+                                  lambda: 431960):
+            state = self._check()
+        self.assertEqual(self.pipeline_calls, [])
+        self.assertIn("manual_hold", state)
+
     def test_detecting_the_held_game_clears_hold_quietly(self):
         # last-played is the held game itself — hold is moot, no re-theme
         games = [dict(self.GAMES[0], rtime_last_played=self.hold_at + 60),

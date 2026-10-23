@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 
 import artwork
 import extras
+import livewall
 import palette as palette_mod
 import steamdetect
 import upscale
@@ -35,7 +36,7 @@ else:
     import linux_theme as theme_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-__version__ = "1.8.1"
+__version__ = "1.9.0"
 
 
 def safe_join(base, *parts):
@@ -328,6 +329,12 @@ def run_pipeline(cfg, game, log, dry_run=False):
     theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
     extras.apply_terminal(cfg, pal, theme_name, art.get("hero"), log)
     extras.apply_rgb(cfg, pal, log)
+    # optional looping-video wallpaper (ComfyUI -> Wallpaper Engine);
+    # reuses the upscaler's VLM placeholder context
+    livewall.maybe_generate(cfg, art.get("hero"), up_ctx, cache_key,
+                            theme_name,
+                            next((m["device"] for m in monitors
+                                  if m["role"] == "hero"), ""), log)
     return {"theme_path": theme_path, "palette": pal, "wallpaper": wallpaper}
 
 
@@ -375,6 +382,10 @@ def reapply_from_cache(cfg, log, cache_key):
     extras.apply_terminal(cfg, pal, pal.get("theme_name") or cache_key,
                           pal.get("wallpaper"), log)
     extras.apply_rgb(cfg, pal, log)
+    mon = theme_mod.assign_roles(theme_mod.enumerate_monitors(),
+                                 cfg.get("monitors", []), lambda m: None)
+    hero_dev = next((m["device"] for m in mon if m["role"] == "hero"), "")
+    livewall.reapply_cached(cfg, cache_key, pal, hero_dev, log)
     # point state at this theme and set a manual hold: the poller keeps
     # this theme until the user actually plays a (different) game, instead of
     # reverting to the last-played game on the next poll
@@ -667,9 +678,15 @@ def check_once(cfg, log, force=False, appid_override=None, dry_run=False):
             log(f"manual theme hold: re-running held theme "
                 f"'{hold.get('name') or held}' (detected game ignored)")
         else:
-            running = source in ("now-playing", "custom-process")
-            played_since = (game.get("rtime_last_played") or 0) > \
-                           (hold.get("held_at") or 0)
+            # an excluded app (Wallpaper Engine and friends) is a utility,
+            # not a game the user "actually played" — it must never
+            # release a manual hold, even though Steam reports it as
+            # last-played every time it launches
+            excluded = appid in excludes
+            running = (source in ("now-playing", "custom-process")
+                       and not excluded)
+            played_since = ((game.get("rtime_last_played") or 0) >
+                           (hold.get("held_at") or 0) and not excluded)
             if running or played_since:
                 log(f"manual theme hold released — {source}: {game['name']}")
                 state.pop("manual_hold", None)
@@ -760,18 +777,28 @@ def main():
             # belong to the theme on screen right now, re-apply it so the
             # crisp art replaces the fallback originals
             done = upscale.drain_comfy_queue(cfg, log)
-            if done:
-                st = load_state(cfg)
-                hold = st.get("manual_hold")
-                current = (str(hold.get("identity"))
-                           if isinstance(hold, dict) and hold.get("identity")
-                           else str(st.get("last_cache_key") or ""))
-                if current and current in done:
-                    log("comfy queue: re-theming the current game with its "
-                        "fresh upscales")
-                    check_once(cfg, log, force=True)
-                    time.sleep(interval)
-                    continue
+            st = load_state(cfg)
+            hold = st.get("manual_hold")
+            current = (str(hold.get("identity"))
+                       if isinstance(hold, dict) and hold.get("identity")
+                       else str(st.get("last_cache_key") or ""))
+            if done and current and current in done:
+                log("comfy queue: re-theming the current game with its "
+                    "fresh upscales")
+                check_once(cfg, log, force=True)
+                time.sleep(interval)
+                continue
+            # deferred live-wallpaper videos: apply the finished one if
+            # it belongs to the theme currently on screen
+            for key, _title, proj in livewall.drain_queue(cfg, log):
+                if proj and key == current:
+                    mon = theme_mod.assign_roles(
+                        theme_mod.enumerate_monitors(),
+                        cfg.get("monitors", []), lambda m: None)
+                    hero_dev = next((m["device"] for m in mon
+                                     if m["role"] == "hero"), "")
+                    log("livewall queue: applying the finished video")
+                    livewall.apply_we(cfg, proj, hero_dev, log)
             check_once(cfg, log)
         except Exception as e:
             log(f"poll error: {e}")

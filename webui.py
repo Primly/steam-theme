@@ -15,6 +15,8 @@ API:
   POST /api/test/topaz          {api_key}                    (auth check, no credits)
   POST /api/test/comfy          {host, port, workflow}       (connectivity + JSON, no GPU work)
   GET  /api/comfy-default-workflow   built-in default workflow (UI guide text)
+  POST /api/test/livewall      {host, port, workflow}       (video workflow, no GPU work)
+  GET  /api/livewall-default-workflow   built-in default video workflow
   POST /api/run-now             run the pipeline once in a background thread
   GET  /api/art?key&role&i      cached art; role=hero&i=N serves candidate N
   POST /api/hero-choice         {key, index} pick a hero candidate + regenerate
@@ -218,8 +220,59 @@ def test_comfy(body):
                       "(LoadImage + SaveImage found)"}
 
 
+def test_livewall(body):
+    """Live-wallpaper ComfyUI connectivity + workflow validation. No GPU
+    work is submitted — GET /system_stats for reachability, then a
+    structural check of the video workflow (both formats accepted, graph
+    format is flattened: needs LoadImage and a video output or a wireable
+    terminal IMAGE)."""
+    import re as _re
+    import livewall as _lw
+    host = str(body.get("host") or "127.0.0.1").strip()
+    if not _re.fullmatch(r"[A-Za-z0-9.\-]+", host):
+        return {"ok": False, "error": f"bad host {host!r}"}
+    raw_port = body.get("port")
+    try:
+        port = int(raw_port) if raw_port not in (None, "") else 8188
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "bad port"}
+    if not 1 <= port <= 65535:
+        return {"ok": False, "error": "bad port"}
+    base = f"http://{host}:{port}"
+    t = time.time()
+    try:
+        r = requests.get(base + "/system_stats", timeout=8)
+    except requests.RequestException as e:
+        return {"ok": False, "error": f"unreachable: {e}"}
+    if r.status_code != 200:
+        return {"ok": False, "error": f"HTTP {r.status_code} from /system_stats"}
+    ms = round((time.time() - t) * 1000)
+    gpu = ""
+    try:
+        devs = r.json().get("devices") or []
+        if devs:
+            gpu = devs[0].get("name", "")
+    except ValueError:
+        pass
+    api, werr = _lw.validate_workflow(body.get("workflow") or "")
+    if werr:
+        return {"ok": False, "error":
+                f"connected ({gpu or 'ComfyUI up'}) but workflow: {werr}"}
+    n_topaz = sum(1 for n in api.values()
+                  if n.get("class_type") == "TopazVideoAI"
+                  and n.get("inputs", {}).get("enable_upscale"))
+    detail = (f"connected — {gpu or 'ComfyUI is up'}; workflow OK "
+              f"({len(api)} nodes incl. subgraph flattening; video output "
+              "found; placeholders supported)")
+    if n_topaz:
+        detail += (f" — WARNING: {n_topaz} TopazVideoAI node(s) have "
+                   "enable_upscale on, which SPENDS Topaz credits per video")
+    return {"ok": True, "latency_ms": ms, "detail": detail}
+
+
 TESTS = {"steam": test_steam, "sgdb": test_sgdb, "ai": test_ai,
-         "topaz": test_topaz, "comfy": test_comfy}
+         "topaz": test_topaz, "comfy": test_comfy,
+         "livewall": test_livewall}
 
 # Ultimate Fetch progress (single worker at a time; written by its thread,
 # read by the status endpoint — plain dict swaps are GIL-atomic enough here)
@@ -385,6 +438,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/comfy-default-workflow":
             import upscale as _up
             self._send(200, {"ok": True, "workflow": _up.DEFAULT_COMFY_WORKFLOW})
+        elif path == "/api/livewall-default-workflow":
+            import livewall as _lw
+            self._send(200, {"ok": True,
+                             "workflow": _lw.default_workflow()})
         elif path == "/api/fetch-all-upscale-estimate":
             import main as app
             try:

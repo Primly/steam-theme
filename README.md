@@ -10,12 +10,12 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.8.1-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.9.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
 
-**Jump to:** [What it does](#-what-it-does) · [Install — Windows](#-installation--windows) · [Install — Linux](#-installation--linux-bazzite--other-kde-distros) · [How it works](#-how-it-works) · [Configuration](#️-configuration) · [AI naming](#-ai--vlm-theme-naming) · [Upscaling](#-upscaling) ([Topaz](#topaz-gigapixel-cloud-paid) · [ComfyUI](#comfyui-local-free)) · [RGB lighting](#-rgb-lighting) · [Ultimate Fetch](#-ultimate-fetch) · [Troubleshooting](#-troubleshooting) · [Changelog](#-changelog)
+**Jump to:** [What it does](#-what-it-does) · [Install — Windows](#-installation--windows) · [Install — Linux](#-installation--linux-bazzite--other-kde-distros) · [How it works](#-how-it-works) · [Configuration](#️-configuration) · [AI naming](#-ai--vlm-theme-naming) · [Upscaling](#-upscaling) ([Topaz](#topaz-gigapixel-cloud-paid) · [ComfyUI](#comfyui-local-free)) · [Live wallpaper](#-live-wallpaper-wallpaper-engine) · [RGB lighting](#-rgb-lighting) · [Ultimate Fetch](#-ultimate-fetch) · [Troubleshooting](#-troubleshooting) · [Changelog](#-changelog)
 
 ---
 
@@ -36,6 +36,9 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
   fill, it's enlarged with [Topaz Gigapixel](https://www.topazlabs.com/)
   or, **free**, on your own GPU through [ComfyUI](https://www.comfy.org/).
   Results are cached, so each image is only ever processed once.
+- **Animates (optional)** — the hero art becomes a short looping video
+  (ComfyUI again) and lands in Wallpaper Engine as a live background on the
+  hero display.
 - **Applies it everywhere:**
   - per-monitor wallpapers (hero on the big screen, logo & icon on the others)
   - system accent color + dark/light mode
@@ -292,6 +295,7 @@ the hero, so wordmarks stay crisp instead of being zoomed and cropped.
 | **Artwork sources** | SteamGridDB / wallhaven keys, live test |
 | **AI / VLM** | OpenAI-compatible endpoint, presets, model dropdown, live test |
 | **Upscaling** | provider (Topaz / AI images / ComfyUI), Topaz key + model picker (Precision/Generative), per-role models, creativity, prompt; ComfyUI host/port, Export-API workflow JSON + per-role workflow overrides, defer-while-gaming |
+| **Live wallpaper** | enable, provider (ComfyUI), host/port, video workflow (Export API or normal save JSON), defer-while-gaming, generation timeout, Wallpaper Engine monitor |
 | **Extras** | Windows Terminal (Windows) / Konsole (Linux), SignalRGB (Windows) / OpenRGB (Linux) |
 | **Monitors** | detected displays → role mapping |
 | **Ultimate Fetch** | pre-cache artwork for the whole Steam library, with progress + cancel; optional upscaling (Topaz credits with an estimate, or free ComfyUI GPU time) |
@@ -324,6 +328,7 @@ UI takes effect without restarts.
 | `topaz.api_key` / `model` / `creativity` / `prompt` / `models` | — | Topaz settings; `models.hero/logo/icon` override per role |
 | `comfy.host` / `port` / `workflow` / `workflows` / `defer_while_gaming` / `timeout_seconds` | `127.0.0.1` / `8188` / built-in / — / `true` / `900` | Local ComfyUI upscaling; `workflow` = Export-API JSON (empty = built-in Ultimate SD Upscale default); `workflows.hero/logo/icon` override per role; jobs defer to a queue while a game runs |
 | `ai.upscale_model` | `ai.model` | Model for the `ai` images provider |
+| `livewall.enabled` / `provider` / `host` / `port` / `workflow` / `defer_while_gaming` / `timeout_seconds` / `we_monitor` | `false` / `comfy` / `127.0.0.1` / `8188` / built-in / `true` / `3600` / `-1` | Looping-video wallpaper: ComfyUI video workflow (empty = built-in LTX-2.5 default; graph saves accepted), queued while gaming; `we_monitor` -1 = hero display, else a WE monitor index |
 | `signalrgb.*` (Windows) | — | `enabled`, `base_url`, `custom_effect`, `effect_style`, `effect_scope` (`per_game`/`single`), `effects_dir`, `fallback_effect` |
 | `windows_terminal.*` (Windows) | — | `enabled`, `set_background_image`, `background_opacity` |
 | `konsole.*` (Linux) | — | `enabled`, `set_default_profile` |
@@ -500,6 +505,41 @@ Details:
 - The cache is keyed by a hash of the workflow — **editing the workflow
   re-generates** upscales; old caches simply go unused.
 
+## 🎬 Live wallpaper (Wallpaper Engine)
+
+Generate a short looping video from the hero art and set it as an animated
+[Wallpaper Engine](https://www.wallpaperengine.io) background on the hero
+display:
+
+- **ComfyUI does the generating.** Paste any video workflow — the built-in
+  default is LTX-2.5 first/last-frame looping (subtle ambient motion that
+  returns to the art). Both formats work: Dev-Mode **Export API** JSON *or*
+  a normal ComfyUI save (the new `nodes`/`links` format, including
+  subgraphs — flattened automatically).
+- **Placeholders** work exactly like the upscaling node: `{game}`, `{role}`,
+  `{mood}`, `{theme_name}`, `{appearance}`, `{palette_mode}` + custom keys
+  from your naming prompt's JSON shape. The default prompt leans on
+  `{loop_prompt}` — add a `"loop_prompt"` key to your naming prompt's JSON
+  contract (a per-game ambient-motion description) and the VLM authors each
+  video individually; without it the placeholder drops out harmlessly.
+- **Looping by construction**: every `LoadImage` node receives the hero
+  image, so the first and last frames match.
+- **Defer while gaming** (default on): generation queues while a game runs
+  and drains when you stop — one video takes minutes of GPU, so it never
+  fights your game for it.
+- **Cached per hero**: one video per hero image (content-hashed) under
+  `cache/<game>/livewall/`, never re-generated — delete its folder to force
+  a redo. *Full refetch* wipes them with the rest of the cache.
+- **Wallpaper Engine apply** (Windows): applied live via
+  `-control openWallpaper` when WE is running, otherwise written into WE's
+  `config.json` so it's active on its next launch. Target monitor defaults
+  to the hero display; `livewall.we_monitor` overrides. On other platforms
+  videos are generated and cached, just not applied.
+- **Topaz video upscale**: the default workflow carries a `TopazVideoAI`
+  node but ships with `enable_upscale` **off** (credit safety). Flip it on
+  in the JSON for Topaz-enhanced video — it spends Topaz credits per
+  video.
+
 ## 🌈 RGB lighting
 
 ### SignalRGB (Windows)
@@ -629,6 +669,8 @@ Everything the app writes stays inside its own folder:
 | `config.json` | your settings + API keys (gitignored, never committed) |
 | `cache/<appid>/` | per-game art, upscales, palette, theme file, wallpapers |
 | `cache/comfy_queue.json` | ComfyUI upscale jobs deferred while a game is running (drained automatically) |
+| `cache/<appid>/livewall/` | looping wallpaper videos + their Wallpaper Engine `project.json` (per hero-image hash) |
+| `cache/video_queue.json` | live-wallpaper jobs deferred while a game is running (drained automatically) |
 | `state.json` | last themed game, manual hold (gitignored) |
 | `service.log` | what the service has been doing (gitignored) |
 | `windows_backup.json` / `desktop_backup.json` | pre-app desktop snapshot |
@@ -659,7 +701,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 168 tests
+python -m unittest discover -s tests -v   # 197 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -667,6 +709,7 @@ python -m unittest discover -s tests -v   # 168 tests
 - `main.py` — orchestration; picks the backend via `sys.platform`
 - `steamdetect.py` — detection (Steam API + per-platform now-playing)
 - `artwork.py`, `palette.py`, `upscale.py` — fetch → palette → upscale
+- `livewall.py` (+ `livewall_default_workflow.json`) — looping video wallpapers: graph-format flattening, ComfyUI submit, Wallpaper Engine apply
 - `extras.py` (+ `srgb_effects.py`, `openrgb_sync.py`) — terminal + RGB
 - `webui.py` / `webui.html` — config server + UI
 
@@ -692,6 +735,8 @@ CI. Platform-specific tests skip cleanly on the other OS.
 | ComfyUI test fails | ComfyUI must be installed and running at the host/port in the Upscaling section; the Test button checks reachability **and** your workflow JSON |
 | ComfyUI upscales never seem to run | *Defer while gaming* is on (default): jobs queue while you play and drain when you stop — the log names every deferred job. Also check the per-image timeout |
 | ComfyUI job fails on the GPU side | Read the log line (`comfy job failed: …`) — usually a model missing from ComfyUI (the built-in default needs SDXL + the 4x-UltraSharp upscaler) or an out-of-memory tile size |
+| Live wallpaper never generates | *Defer while gaming* is on (default): it queues while you play and generates when you stop — the log names every queued job. Also check the ComfyUI host/port in the Live wallpaper section and that its workflow passes Test |
+| Video generated but Wallpaper Engine doesn't show it | WE must be running for live apply (otherwise it's queued in WE's config for its next launch); if it lands on the wrong display, set an explicit Wallpaper Engine monitor in the config UI |
 | Linux: monitor names don't match | Use connector names (`HDMI-A-1`) — the Monitors section shows exactly what to match |
 | Linux: `xrdb: Can't open display` in logs | Harmless Wayland-session noise from KDE tools; can be ignored |
 | Linux: nothing happens in Game Mode | Theming targets the Plasma desktop session — the theme applies when you return to the desktop; detection still runs |
@@ -699,6 +744,25 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.9.0** — **live wallpapers**: the hero art becomes a short looping
+  video through a ComfyUI workflow and is installed as a Wallpaper Engine
+  animated background on the hero display. Accepts both workflow formats —
+  Dev-Mode Export API JSON *and* normal ComfyUI saves (the new
+  `nodes`/`links` graph format, with subgraph flattening: boundary
+  constants resolved by name, frontend-only widgets dropped, widget values
+  filtered against the server's input specs at submit). The built-in
+  default is LTX-2.5 first/last-frame looping (the attached workflow, with a
+  placeholder-driven prompt and the Topaz video node's credit-spending
+  upscale turned OFF by default). Placeholders `{game}`/`{role}`/`{mood}`/
+  `{theme_name}`/… fill into workflow strings JSON-safely; every `LoadImage`
+  gets the hero so the loop returns to the art. Videos are content-hash
+  cached per hero and defer-while-gaming queues them like upscales; finished
+  videos apply live via `-control openWallpaper` or via WE's config.json
+  when it isn't running. Dynamic-combo widgets (dotted names like
+  `resize_type.crop`) assemble into the API's nested `{"key", "inputs"}`
+  shape instead of being dropped. The default prompt leans on a
+  `{loop_prompt}` placeholder so the VLM can author the ambient motion per
+  game. 22 new tests (197 total).
 - **1.8.1** — **readable terminals, always**: the terminal scheme's text
   colors are now contrast-guaranteed against what's actually behind them —
   the foreground clears WCAG AA (4.5:1) against the *worst-case* region of
