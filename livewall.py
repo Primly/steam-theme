@@ -260,7 +260,51 @@ def _ensure_video_output(api):
     return None
 
 
-def parse_workflow(text):
+_BARE_PLACEHOLDER = __import__("re").compile(
+    r'\{\s*([A-Za-z_][A-Za-z0-9_]{0,63})\s*\}')
+
+
+def repair_json(text):
+    """Best-effort repair of a hand-edited workflow: people type
+    {placeholder} tokens straight into the JSON (e.g. `{loop_prompt},` in
+    widgets_values) and JSON needs them quoted.
+
+    String-aware scan: tokens OUTSIDE a JSON string are wrapped in quotes;
+    anything inside a string is left exactly as typed (a prompt like
+    "{game} key art, {mood}" must survive untouched). Only bare
+    single-identifier braces match — real objects contain ':' or quotes.
+    Returns (text, n_repairs)."""
+    out, i, n = [], 0, 0
+    in_str = esc = False
+    while i < len(text):
+        ch = text[i]
+        if in_str:
+            out.append(ch)
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            i += 1
+            continue
+        if ch == '"':
+            in_str = True
+            out.append(ch)
+            i += 1
+            continue
+        m = _BARE_PLACEHOLDER.match(text, i)
+        if m:
+            out.append(f'"{{{m.group(1)}}}"')
+            n += 1
+            i = m.end()
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out), n
+
+
+def parse_workflow(text, log=None):
     """Parse the configured workflow text into a flat API dict, accepting
     both the API format and the graph (save) format. Returns
     (api_dict or None, error or None)."""
@@ -270,7 +314,16 @@ def parse_workflow(text):
     try:
         obj = json.loads(raw)
     except json.JSONDecodeError as e:
-        return None, f"invalid JSON: {e}"
+        fixed, n = repair_json(raw)
+        if not n:
+            return None, f"invalid JSON: {e}"
+        try:
+            obj = json.loads(fixed)
+        except json.JSONDecodeError:
+            return None, f"invalid JSON: {e}"
+        if log:
+            log(f"  [livewall] workflow JSON had {n} unquoted "
+                "{placeholder} token(s) — auto-quoted them")
     if isinstance(obj, dict) and isinstance(obj.get("nodes"), list):
         api, errs = graph_to_api(obj)
         if not api:
@@ -405,7 +458,7 @@ def generate(cfg, hero_path, dst, context, log=print, defer=True):
             log(f"  [livewall] game is running — video queued for "
                 f"{os.path.basename(hero_path)} (generated when you stop)")
         return None
-    api, err = parse_workflow(lw.get("workflow") or "")
+    api, err = parse_workflow(lw.get("workflow") or "", log=log)
     if err:
         log(f"  [livewall] workflow problem: {err}")
         return None

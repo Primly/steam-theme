@@ -143,6 +143,44 @@ class TestWorkflowValidation(LiveWallFixture):
         _, err = livewall.parse_workflow("{nope")
         self.assertIn("invalid JSON", err)
 
+    def test_unquoted_placeholder_tokens_auto_quoted(self):
+        # a hand-edited workflow with a bare {loop_prompt} in widgets_values
+        # (people type placeholders straight into the JSON) must still parse
+        wf = ('{"nodes": [{"id": 1, "type": "LoadImage", "mode": 0, '
+              '"inputs": [], "widgets_values": ["h.jpg"]},'
+              ' {"id": 2, "type": "FramesNode", "mode": 0, "inputs": [],'
+              ' "widgets_values": [{loop_prompt}, false, 5],'
+              ' "widgets_values_named": {"value": {loop_prompt}}}], '
+              '"links": [[1, 1, 0, 2, 0, "IMAGE"]]}')
+        logs = []
+        api, err = livewall.parse_workflow(wf, log=logs.append)
+        self.assertIsNone(err, err)
+        self.assertEqual(api["2"]["inputs"]["value"], "{loop_prompt}")
+        self.assertTrue(any("auto-quoted" in m for m in logs))
+
+    def test_quoted_placeholders_are_left_alone(self):
+        wf = self._api_wf()
+        wf = wf.replace('"image": "h.jpg"',
+                        '"image": "h.jpg", "note": '
+                        '"{game} key art, {mood} atmosphere"')
+        api, err = livewall.parse_workflow(wf)
+        self.assertIsNone(err, err)
+        self.assertEqual(api["1"]["inputs"]["note"],
+                         "{game} key art, {mood} atmosphere")
+
+    def test_repair_does_not_touch_strings(self):
+        # a QUOTED prompt full of placeholders must survive the repair
+        # scan byte-for-byte (the corruption case that motivated it)
+        text = '{"a": "{loop_prompt} {game} {mood}", "b": {loop_prompt}}'
+        fixed, n = livewall.repair_json(text)
+        self.assertEqual(n, 1)
+        self.assertEqual(json.loads(fixed)["a"],
+                         "{loop_prompt} {game} {mood}")
+
+    def test_unrepairable_json_still_rejected(self):
+        _, err = livewall.parse_workflow('{"a": {"b": 1,}}')
+        self.assertIn("invalid JSON", err)
+
     def test_auto_append_when_no_saver(self):
         # ends in a bare IMAGE producer -> CreateVideo + SaveVideo appended
         api, err = livewall.parse_workflow(json.dumps(
