@@ -786,11 +786,19 @@ class TestRegenerateCache(unittest.TestCase):
 
     def test_comfy_upscales_queue_when_enabled(self):
         self.cfg["upscaling"] = {"enabled": True, "provider": "comfy"}
-        self.patch_main(main, "_ufetch_upscale",
-                        lambda cfg, art, mons, name, log, queue_only=False: 2)
-        stats = main.regenerate_cache(self.cfg, lambda m: None)
+        self.patch_main(main.theme_mod, "enumerate_monitors", lambda: [])
+        self.patch_main(main.palette_mod, "build_palette",
+                        lambda *a, **k: {"accent": "#334455",
+                                         "appearance": "dark",
+                                         "mode": "muted"})
+        with mock.patch.object(main, "upscale_toward_monitors",
+                               return_value=2) as up:
+            stats = main.regenerate_cache(self.cfg, lambda m: None)
         self.assertEqual(stats["upscaled"], 4)  # 2 per non-excluded theme
         self.assertTrue(stats["upscaling"])
+        # cache passes never re-ask the VLM and always queue-only
+        for call in up.call_args_list:
+            self.assertTrue(call.kwargs.get("queue_only"))
 
     def test_topaz_upscales_are_skipped_not_run_inline(self):
         # only ComfyUI has a background queue — Topaz would block for hours

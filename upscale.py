@@ -595,7 +595,7 @@ def queue_upscale(src, dst, cfg, target_w, target_h, context=None,
     return enqueue_comfy(cfg, job)
 
 
-def drain_comfy_queue(cfg, log=print):
+def drain_comfy_queue(cfg, log=print, max_jobs=0):
     """Process queued Comfy upscales once the GPU is free (no game running).
     Returns the cache keys (game folders) that received fresh upscales so the
     service can re-apply a theme that's currently on screen. Never raises."""
@@ -624,7 +624,10 @@ def drain_comfy_queue(cfg, log=print):
         return []
     log(f"  [up] comfy queue: processing {len(q)} deferred upscale(s)")
     done_keys, remaining = [], []
-    for job in q:
+    for n, job in enumerate(q):
+        if max_jobs and n >= max_jobs:
+            remaining.append(job)
+            continue
         # the CURRENT config decides the cache slot: if the workflow was
         # edited since enqueue, the job lands under the new slug
         role = job.get("role")

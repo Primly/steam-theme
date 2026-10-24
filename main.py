@@ -473,6 +473,23 @@ def _livewall_rotation_tick(cfg, log):
     livewall.rotate_step(cfg, candidates, key, title, hero_dev, log)
 
 
+def _cached_palette_ctx(cfg, art, pal, name):
+    """Prompt context for a cache pass, from the theme's stored palette —
+    no VLM round-trip (palette.json already holds the values the VLM
+    produced when the theme was made)."""
+    hero = art.get("hero") or next(iter(art.values()))
+    pref = cfg.get("appearance_preference")
+    if pref not in ("dark", "light", "auto"):
+        pref = "dark" if cfg.get("force_dark_mode") else "auto"
+    p = palette_mod.build_palette(hero, pal.get("mode")
+                                  or cfg.get("palette_mode", "colorful"),
+                                  force=None if pref == "auto" else pref)
+    for k in ("theme_name", "mood", "appearance"):
+        if pal.get(k):
+            p[k] = pal[k]
+    return _upscale_context(name, p, None, cfg)
+
+
 def _ufetch_upscale(cfg, art, monitors, name, log, queue_only=False):
     """Ultimate Fetch's upscale pass for one game. Builds the same prompt
     context a real theme run would — a palette for appearance, and VLM
@@ -733,8 +750,9 @@ def regenerate_cache(cfg, log=print, should_cancel=lambda: False,
                 log(f"  [regen] {name}: fetch failed: {e}")
         if art and up:
             try:
-                n = _ufetch_upscale(cfg, art, monitors, name, log,
-                                    queue_only=True)
+                ctx = _cached_palette_ctx(cfg, art, pal, name)
+                n = upscale_toward_monitors(cfg, art, monitors, name, log,
+                                            ctx, queue_only=True)
                 if n:
                     stats["upscaled"] += n
                     acted = True
@@ -973,7 +991,7 @@ def main():
             # deferred Comfy upscales drain once the GPU is free; if they
             # belong to the theme on screen right now, re-apply it so the
             # crisp art replaces the fallback originals
-            done = upscale.drain_comfy_queue(cfg, log)
+            done = upscale.drain_comfy_queue(cfg, log, max_jobs=3)
             st = load_state(cfg)
             hold = st.get("manual_hold")
             current = (str(hold.get("identity"))
