@@ -784,13 +784,25 @@ class TestRegenerateCache(unittest.TestCase):
         self.assertEqual([c[0] for c in self.fetch_calls], [620])
         self.assertEqual(stats["fetched"], 1)
 
-    def test_upscales_run_when_enabled(self):
-        self.cfg["upscaling"] = {"enabled": True}
+    def test_comfy_upscales_queue_when_enabled(self):
+        self.cfg["upscaling"] = {"enabled": True, "provider": "comfy"}
         self.patch_main(main, "_ufetch_upscale",
-                        lambda cfg, art, mons, name, log: 2)
+                        lambda cfg, art, mons, name, log, queue_only=False: 2)
         stats = main.regenerate_cache(self.cfg, lambda m: None)
         self.assertEqual(stats["upscaled"], 4)  # 2 per non-excluded theme
         self.assertTrue(stats["upscaling"])
+
+    def test_topaz_upscales_are_skipped_not_run_inline(self):
+        # only ComfyUI has a background queue — Topaz would block for hours
+        # and spend credits, so regenerate leaves it to Ultimate Fetch
+        self.cfg["upscaling"] = {"enabled": True, "provider": "topaz"}
+        logs = []
+        with mock.patch.object(main, "_ufetch_upscale") as up:
+            stats = main.regenerate_cache(self.cfg, logs.append)
+        up.assert_not_called()
+        self.assertEqual(stats["upscaled"], 0)
+        self.assertFalse(stats["upscaling"])
+        self.assertTrue(any("only ComfyUI" in m for m in logs))
 
     def test_videos_queue_for_heroes_without_clips(self):
         self.cfg["livewall"] = {"enabled": True, "provider": "comfy"}

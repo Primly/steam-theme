@@ -584,6 +584,17 @@ def enqueue_comfy(cfg, job):
     return True
 
 
+def queue_upscale(src, dst, cfg, target_w, target_h, context=None,
+                  role=None):
+    """Queue a ComfyUI upscale for the background drain WITHOUT running it
+    now (bulk passes like Regenerate All). Deduped by src+dst. Returns True
+    when newly queued."""
+    job = {"src": src, "dst": dst, "w": target_w, "h": target_h,
+           "cache_key": os.path.basename(os.path.dirname(src)),
+           "context": context or {}, "role": role}
+    return enqueue_comfy(cfg, job)
+
+
 def drain_comfy_queue(cfg, log=print):
     """Process queued Comfy upscales once the GPU is free (no game running).
     Returns the cache keys (game folders) that received fresh upscales so the

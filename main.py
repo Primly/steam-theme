@@ -157,19 +157,38 @@ def _upscale_context(name, pal, ai, cfg):
     return ctx
 
 
-def upscale_toward_monitors(cfg, art, monitors, name, log, up_ctx):
-    """The upscale pass shared by theme runs and Ultimate Fetch: rotate mode
-    upscales ALL hero candidates toward the hero monitor, pick mode only the
-    active one; logo/icon upscale toward their centered fit boxes. Mutates
-    art paths to their upscaled versions. Credit-safe — maybe_upscale no-ops
-    on cached results or already-big-enough sources. Returns the number of
-    NEW upscale jobs submitted (0 when upscaling is disabled).
+def upscale_toward_monitors(cfg, art, monitors, name, log, up_ctx,
+                            queue_only=False):
+    """The upscale pass shared by theme runs, Ultimate Fetch and Regenerate
+    All: rotate mode upscales ALL hero candidates toward the hero monitor,
+    pick mode only the active one; logo/icon upscale toward their centered
+    fit boxes. Mutates art paths to their upscaled versions. Credit-safe —
+    maybe_upscale no-ops on cached results or already-big-enough sources.
+    Returns the number of NEW upscale jobs submitted (0 when upscaling is
+    disabled).
+
+    queue_only=True submits ComfyUI jobs to the background queue instead of
+    waiting for them (bulk passes can't afford to block per image) and
+    leaves art paths untouched — pending files don't exist yet.
     """
     submitted = 0
 
     def up(path, w, h, role):
         nonlocal submitted
         dst = upscale.cache_path(path, cfg, role)
+        if queue_only:
+            if os.path.exists(dst):
+                return dst
+            # only the ComfyUI provider has a background queue; Topaz/AI
+            # runs inline and would block a bulk pass for hours
+            if cfg.get("upscaling", {}).get("provider") != "comfy":
+                return path
+            needed, _ = upscale._needs_upscale(path, w, h)
+            if not needed:
+                return path
+            if upscale.queue_upscale(path, dst, cfg, w, h, up_ctx, role):
+                submitted += 1
+            return path
         had_cache = os.path.exists(dst)
         out = upscale.maybe_upscale(path, w, h, cfg, log, context=up_ctx,
                                     role=role)
@@ -454,7 +473,7 @@ def _livewall_rotation_tick(cfg, log):
     livewall.rotate_step(cfg, candidates, key, title, hero_dev, log)
 
 
-def _ufetch_upscale(cfg, art, monitors, name, log):
+def _ufetch_upscale(cfg, art, monitors, name, log, queue_only=False):
     """Ultimate Fetch's upscale pass for one game. Builds the same prompt
     context a real theme run would — a palette for appearance, and VLM
     naming when AI is enabled (local/free; its JSON values fill generative
@@ -470,7 +489,8 @@ def _ufetch_upscale(cfg, art, monitors, name, log):
     if ai and pref == "auto" and ai.get("appearance") in ("dark", "light"):
         pal["appearance"] = ai["appearance"]
     return upscale_toward_monitors(cfg, art, monitors, name, log,
-                                   _upscale_context(name, pal, ai, cfg))
+                                   _upscale_context(name, pal, ai, cfg),
+                                   queue_only=queue_only)
 
 
 def _pending_upscales(cfg, art, monitors):
@@ -644,8 +664,14 @@ def regenerate_cache(cfg, log=print, should_cancel=lambda: False,
         entries = []
     excludes = set(cfg.get("exclude_appids", []) or [])
     hero_count = artwork.hero_count_for(cfg)
-    up = bool(cfg.get("upscaling", {}).get("enabled"))
+    up_cfg = cfg.get("upscaling", {}) or {}
+    up = bool(up_cfg.get("enabled")) and up_cfg.get("provider") == "comfy"
     lw = cfg.get("livewall", {}) or {}
+    if cfg.get("upscaling", {}).get("enabled") and not up:
+        log("regenerate all: upscaling provider is "
+            f"'{up_cfg.get('provider')}' — only ComfyUI upscales queue in "
+            "the background, so upscaling is skipped here (run Ultimate "
+            "Fetch with its upscale option for that provider)")
     lw_on = bool(lw.get("enabled")) and lw.get("provider") == "comfy"
     with_videos = bool(with_videos) and lw_on
     monitors = None
@@ -707,7 +733,8 @@ def regenerate_cache(cfg, log=print, should_cancel=lambda: False,
                 log(f"  [regen] {name}: fetch failed: {e}")
         if art and up:
             try:
-                n = _ufetch_upscale(cfg, art, monitors, name, log)
+                n = _ufetch_upscale(cfg, art, monitors, name, log,
+                                    queue_only=True)
                 if n:
                     stats["upscaled"] += n
                     acted = True

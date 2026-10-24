@@ -712,7 +712,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 233 tests
+python -m unittest discover -s tests -v   # 234 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -767,7 +767,10 @@ CI. Platform-specific tests skip cleanly on the other OS.
   and Regenerate All refuse to run at the same time. Videos are only
   queued — the background worker renders them one at a time. `maybe_generate`
   gained an `apply=False` path so cache passes can't flip the wallpaper
-  mid-walk. 12 new tests (233 total).
+  mid-walk, and upscales are queued (`upscale.queue_upscale`) rather than
+  run inline, so the pass can't block for hours; non-ComfyUI upscale
+  providers are skipped by this pass (only ComfyUI has a background
+  queue). 13 new tests (234 total).
 - **1.9.6** — **Topaz video finishing: ×2 upscale on**: the shipped
   `TopazVideoAI` node now upscales ×2 (2560×720 → 5120×1440) on top of the
   `apf-2` interpolation, staying CPU-side (`use_gpu` false) — with
