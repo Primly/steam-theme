@@ -532,6 +532,21 @@
     <span class="hint" id="ufetchStatus" style="margin:0"></span>
   </div>
   <div class="pbar" id="ufetchBar" style="display:none"><div id="ufetchFill"></div></div>
+  <div class="sub">Regenerate all cached themes</div>
+  <p class="hint">Walks every theme already in the cache and fills in whatever is missing:
+    refetches absent artwork, runs the upscale pass for images with no cached result, and
+    queues a looping video for any hero that doesn’t have one yet (rendered later by the
+    background worker). It never applies a theme. Every step is idempotent, so cancelling
+    and re-running just picks up where it left off.</p>
+  <div class="row">
+    <div class="switch"><input type="checkbox" id="regenVideos" checked><span>Also queue missing live-wallpaper videos</span></div>
+  </div>
+  <div class="row">
+    <button id="regenBtn" onclick="startRegen()">Regenerate All</button>
+    <button id="regenCancel" onclick="cancelRegen()" style="display:none">Cancel</button>
+    <span class="hint" id="regenStatus" style="margin:0"></span>
+  </div>
+  <div class="pbar" id="regenBar" style="display:none"><div id="regenFill"></div></div>
 </section>
 
 <section>
@@ -805,9 +820,11 @@ async function load() {
   loadState();
   loadGallery();
   refreshLog();
-  // resume the progress bar if an Ultimate Fetch is already running
+  // resume the progress bars if a bulk job is already running
   const fa = await api("/api/fetch-all-status");
   if (fa.running) pollUFetch(); else renderUFetch(fa);
+  const rg = await api("/api/regenerate-all-status");
+  if (rg.running) pollRegen(); else renderRegen(rg);
   setInterval(refreshLog, 5000);
 }
 
@@ -1068,6 +1085,75 @@ async function ufetchEstimate() {
     `fetched add more. Each submission spends Topaz credits (~1 per 2 MP of ` +
     `output on generative models); results are cached, so this is a one-time ` +
     `cost per image per model. Rotate mode upscales EVERY hero candidate.`;
+}
+
+let regenTimer = null;
+
+async function startRegen() {
+  const videos = document.getElementById("regenVideos").checked;
+  const up = cfg.upscaling && cfg.upscaling.enabled;
+  const topaz = up && cfg.upscaling.provider === "topaz";
+  if (!confirm(
+      "Regenerate All walks every cached theme and fills in what's missing:\n" +
+      "• refetch absent artwork (network)\n" +
+      "• run the upscale pass for images with no cached result" +
+      (topaz ? "\n\n💳 UPSCALING PROVIDER IS TOPAZ: any pending upscales spend " +
+               "credits (cached images are skipped, so re-runs are free)."
+             : "") +
+      (videos ? "\n• queue a looping video for every hero that has none " +
+                "(rendered later in the background — slow, but free)" : "") +
+      "\n\nNo themes are applied. Cancel any time — it resumes where it " +
+      "left off.\n\nContinue?"))
+    return;
+  const r = await api("/api/regenerate-all", {videos});
+  const st = document.getElementById("regenStatus");
+  if (!r.ok) { st.textContent = r.error || "failed to start"; return; }
+  st.textContent = r.detail;
+  pollRegen();
+  setTimeout(refreshLog, 2000);
+}
+
+async function cancelRegen() {
+  const r = await api("/api/regenerate-all-cancel", {});
+  document.getElementById("regenStatus").textContent = r.detail || r.error || "";
+}
+
+function renderRegen(s) {
+  const bar = document.getElementById("regenBar");
+  const fill = document.getElementById("regenFill");
+  const st = document.getElementById("regenStatus");
+  document.getElementById("regenBtn").style.display = s.running ? "none" : "";
+  document.getElementById("regenCancel").style.display = s.running ? "" : "none";
+  if (s.running) {
+    bar.style.display = "";
+    const pct = s.total ? Math.round(100 * s.done / s.total) : 0;
+    fill.style.width = pct + "%";
+    st.textContent = s.total
+      ? `${s.done} / ${s.total} (${pct}%) — ${s.current}`
+      : "scanning the cache…";
+  } else if (s.stats || s.error) {
+    bar.style.display = "none";
+    if (s.error) { st.textContent = "failed: " + s.error; return; }
+    st.textContent =
+      `${s.stats.fetched} refetched, ${s.stats.upscaled} image(s) queued for ` +
+      `upscale, ${s.stats.videos} video(s) queued, ${s.stats.complete} ` +
+      `already complete, ${s.stats.skipped} skipped, ${s.stats.failed} failed` +
+      (s.stats.cancelled ? " (cancelled)" : "");
+  }
+}
+
+async function pollRegen() {
+  if (regenTimer) clearInterval(regenTimer);
+  const tick = async () => {
+    const s = await api("/api/regenerate-all-status");
+    renderRegen(s);
+    if (!s.running && regenTimer) {
+      clearInterval(regenTimer); regenTimer = null;
+      loadGallery(); refreshLog();
+    }
+  };
+  await tick();
+  regenTimer = setInterval(tick, 2000);
 }
 
 async function cancelUFetch() {

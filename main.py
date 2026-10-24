@@ -36,7 +36,7 @@ else:
     import linux_theme as theme_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-__version__ = "1.9.6"
+__version__ = "1.10.0"
 
 
 def safe_join(base, *parts):
@@ -622,6 +622,127 @@ def fetch_library(cfg, log=print, should_cancel=lambda: False,
         f"{stats['failed']} failed"
         + (f", {stats['upscaled']} images upscaled" if with_upscale else "")
         + f"{' (cancelled)' if stats['cancelled'] else ''}")
+    return stats
+
+
+def regenerate_cache(cfg, log=print, should_cancel=lambda: False,
+                     progress=None, with_videos=True):
+    """Regenerate All: walk every theme already in the cache and fill in
+    what's missing — art (gaps refetched), upscales (images with no cached
+    result), and live-wallpaper videos (heroes with no clip). Never applies
+    a theme; every step is idempotent, so a cancelled run resumes cheaply.
+
+    Upscaling follows the configured provider — ComfyUI is free, Topaz
+    spends credits (rotating heroes scale with the hero count). Videos are
+    only QUEUED for the background worker, never rendered inline here.
+    Excluded appids are skipped. Returns a stats dict."""
+    root = cfg_path(cfg, "cache_dir", "cache")
+    try:
+        entries = sorted(e for e in os.listdir(root)
+                         if os.path.isdir(os.path.join(root, e)))
+    except OSError:
+        entries = []
+    excludes = set(cfg.get("exclude_appids", []) or [])
+    hero_count = artwork.hero_count_for(cfg)
+    up = bool(cfg.get("upscaling", {}).get("enabled"))
+    lw = cfg.get("livewall", {}) or {}
+    lw_on = bool(lw.get("enabled")) and lw.get("provider") == "comfy"
+    with_videos = bool(with_videos) and lw_on
+    monitors = None
+    if up:
+        monitors = theme_mod.assign_roles(theme_mod.enumerate_monitors(),
+                                          cfg.get("monitors", []), log)
+    hero_dev = ""
+    if with_videos:
+        mons = monitors or theme_mod.assign_roles(
+            theme_mod.enumerate_monitors(), cfg.get("monitors", []),
+            lambda m: None)
+        hero_dev = next((m["device"] for m in mons
+                         if m["role"] == "hero"), "")
+    stats = {"total": len(entries), "complete": 0, "fetched": 0,
+             "upscaled": 0, "videos": 0, "failed": 0, "skipped": 0,
+             "upscaling": up, "videos_on": with_videos,
+             "cancelled": False}
+    log(f"regenerate all: {len(entries)} cached theme(s) — upscaling "
+        f"{'on' if up else 'off'}, videos {'on' if with_videos else 'off'}")
+    for i, key in enumerate(entries):
+        if should_cancel():
+            stats["cancelled"] = True
+            log(f"  [regen] cancelled after {i} theme(s)")
+            break
+        if key.isdigit() and int(key) in excludes:
+            stats["skipped"] += 1
+            continue
+        cache = os.path.join(root, key)
+        pal = {}
+        try:
+            with open(os.path.join(cache, "palette.json"),
+                      encoding="utf-8") as f:
+                pal = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            pass
+        name = str(pal.get("game_name") or key)
+        if progress:
+            progress(i, stats["total"], name)
+        acted = False
+        art = artwork.art_from_cache(cache)
+        if not art or not artwork.art_is_cached(cache, hero_count):
+            try:
+                log(f"  [regen] {i + 1}/{stats['total']}: {name} — "
+                    "refetching missing art")
+                appid = int(key) if key.isdigit() else None
+                fresh = artwork.fetch_artwork(
+                    appid, name, None, {**cfg, "cache_dir": root}, log,
+                    cache_key=key)
+                if fresh:
+                    art = {**(art or {}), **fresh}
+                    stats["fetched"] += 1
+                    acted = True
+                else:
+                    stats["failed"] += 1
+                    log(f"  [regen] {name}: no artwork found")
+                time.sleep(0.4)  # be polite to SteamGridDB / the CDNs
+            except Exception as e:
+                stats["failed"] += 1
+                log(f"  [regen] {name}: fetch failed: {e}")
+        if art and up:
+            try:
+                n = _ufetch_upscale(cfg, art, monitors, name, log)
+                if n:
+                    stats["upscaled"] += n
+                    acted = True
+            except Exception as e:
+                log(f"  [regen] {name}: upscale pass failed: {e}")
+        if art and with_videos:
+            try:
+                hero = art.get("hero")
+                heroes = ([hero] if hero else []) + [
+                    c for c in (art.get("hero_candidates") or [])
+                    if isinstance(c, str) and c != hero]
+                ctx = {"game": name,
+                       "theme_name": pal.get("theme_name") or "",
+                       "mood": pal.get("mood") or "",
+                       "appearance": pal.get("appearance") or "dark",
+                       "palette_mode": pal.get("mode") or "colorful"}
+                out = livewall.maybe_generate(
+                    cfg, heroes, ctx, key,
+                    pal.get("theme_name") or name, hero_dev, log,
+                    apply=False) or {}
+                if out.get("queued"):
+                    stats["videos"] += out["queued"]
+                    acted = True
+            except Exception as e:
+                log(f"  [regen] {name}: video pass failed: {e}")
+        if not acted:
+            stats["complete"] += 1
+    if progress:
+        progress(stats["total"] if not stats["cancelled"] else i,
+                 stats["total"], "")
+    log(f"regenerate all finished: {stats['fetched']} theme(s) refetched, "
+        f"{stats['upscaled']} image(s) queued for upscale, "
+        f"{stats['videos']} video(s) queued, {stats['complete']} already "
+        f"complete, {stats['skipped']} skipped, {stats['failed']} failed"
+        f"{' (cancelled)' if stats['cancelled'] else ''}")
     return stats
 
 

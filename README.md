@@ -299,6 +299,7 @@ the hero, so wordmarks stay crisp instead of being zoomed and cropped.
 | **Extras** | Windows Terminal (Windows) / Konsole (Linux), SignalRGB (Windows) / OpenRGB (Linux) |
 | **Monitors** | detected displays → role mapping |
 | **Ultimate Fetch** | pre-cache artwork for the whole Steam library, with progress + cancel; optional upscaling (Topaz credits with an estimate, or free ComfyUI GPU time) |
+| **Regenerate All** | repair every cached theme: refetch missing art, run pending upscales, queue missing hero videos (background, never applies a theme) |
 | **Theme gallery** | thumbnails of every cached theme; re-apply instantly |
 | **Activity log** | live tail of what the service is doing |
 
@@ -711,7 +712,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 221 tests
+python -m unittest discover -s tests -v   # 233 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -756,6 +757,17 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.10.0** — **Regenerate All**: a maintenance pass over every theme in
+  the cache. For each one it refetches absent artwork (gap-filling, so
+  existing picks and candidates are untouched), runs the upscale pass for
+  images without a cached result, and queues a looping video for every hero
+  that doesn't have one yet. It never applies a theme, skips excluded
+  appids, is fully idempotent (cancel and re-run freely) and lives in the
+  Ultimate Fetch section with its own progress bar + cancel; Ultimate Fetch
+  and Regenerate All refuse to run at the same time. Videos are only
+  queued — the background worker renders them one at a time. `maybe_generate`
+  gained an `apply=False` path so cache passes can't flip the wallpaper
+  mid-walk. 12 new tests (233 total).
 - **1.9.6** — **Topaz video finishing: ×2 upscale on**: the shipped
   `TopazVideoAI` node now upscales ×2 (2560×720 → 5120×1440) on top of the
   `apf-2` interpolation, staying CPU-side (`use_gpu` false) — with

@@ -995,19 +995,21 @@ def sync_queue(cfg, cache_key, jobs):
 
 
 def maybe_generate(cfg, heroes, context, cache_key, theme_title,
-                   hero_device, log=print):
+                   hero_device, log=print, apply=True):
     """Theme-pipeline hook: make sure EVERY hero candidate has a looping
     video, put a ready one on the wallpaper, and queue the rest.
 
     Generation never happens here — a clip can take an hour, so the
     background drain worker renders queued heroes one at a time (gated on
     gaming / ComfyUI availability)."""
+    out = {"heroes": 0, "cached": 0, "queued": 0, "applied": False}
     lw = cfg.get("livewall", {})
     if not (lw.get("enabled") and lw.get("provider") == "comfy"):
-        return
+        return out
     hs = _hero_list(cfg, heroes)
     if not hs:
-        return
+        return out
+    out["heroes"] = len(hs)
     jobs, cached = [], 0
     for hero in hs:
         try:
@@ -1020,15 +1022,22 @@ def maybe_generate(cfg, heroes, context, cache_key, theme_title,
         jobs.append({"src": hero, "dst": dst, "context": context or {},
                      "cache_key": cache_key, "theme_title": theme_title,
                      "hero": hero, "attempts": 0})
+    out["cached"] = cached
     if jobs:
         added = sync_queue(cfg, cache_key, jobs)
+        out["queued"] = added
         log(f"  [livewall] hero videos: {len(jobs)} to make "
             f"({cached} cached, {added} queued now) — original art, one at "
             "a time in the background")
-    # a ready video for the active hero goes straight onto the wallpaper
-    if apply_for_hero(cfg, hs[0], cache_key, theme_title, hero_device, log):
+    # a ready video for the active hero goes straight onto the wallpaper —
+    # unless the caller is a cache pass (Regenerate All), which must never
+    # change what's on screen
+    if apply and apply_for_hero(cfg, hs[0], cache_key, theme_title,
+                                hero_device, log):
+        out["applied"] = True
         log(f"  [livewall] applied cached video for "
             f"{os.path.basename(hs[0])}")
+    return out
 
 
 def rotate_step(cfg, candidates, cache_key, theme_title, hero_device,

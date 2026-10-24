@@ -207,6 +207,77 @@ class TestFetchAllEndpoints(ServerFixture):
         self.assertEqual(data["games"], 2)
 
 
+class TestRegenEndpoints(ServerFixture):
+    def test_status_shape(self):
+        r = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/regenerate-all-status")
+        with urllib.request.urlopen(r, timeout=5) as resp:
+            data = json.loads(resp.read())
+        self.assertIn("running", data)
+        self.assertIn("videos", data)
+
+    def test_double_start_rejected(self):
+        webui.REGEN["running"] = True
+        try:
+            self.assertEqual(self.req("/api/regenerate-all", "POST",
+                                      body={}), 409)
+        finally:
+            webui.REGEN["running"] = False
+
+    def test_blocked_while_ultimate_fetch_runs(self):
+        webui.FETCH_ALL["running"] = True
+        try:
+            self.assertEqual(self.req("/api/regenerate-all", "POST",
+                                      body={}), 409)
+        finally:
+            webui.FETCH_ALL["running"] = False
+        # ...and Ultimate Fetch is blocked while regenerate runs
+        webui.REGEN["running"] = True
+        try:
+            self.assertEqual(self.req("/api/fetch-all", "POST",
+                                      body={}), 409)
+        finally:
+            webui.REGEN["running"] = False
+
+    def test_cancel_when_idle_rejected(self):
+        webui.REGEN["running"] = False
+        r = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/regenerate-all-cancel",
+            method="POST", data=b"{}",
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(r, timeout=5) as resp:
+            data = json.loads(resp.read())
+        self.assertFalse(data["ok"])
+
+    def test_start_runs_worker_and_reports_stats(self):
+        # start a real worker against a tiny empty cache dir: it finishes
+        # quickly and the status endpoint shows the final stats
+        import main, tempfile, time as _t
+        tmp = tempfile.mkdtemp(dir=main.BASE_DIR)
+        self.addCleanup(lambda: __import__("shutil").rmtree(
+            tmp, ignore_errors=True))
+        os.makedirs(os.path.join(tmp, "440"))
+        rel = os.path.relpath(tmp, main.BASE_DIR)
+        cfg = {"cache_dir": rel, "log_file": os.path.join(rel, "x.log"),
+               "hero": {"count": 1}, "livewall": {"enabled": False},
+               "upscaling": {"enabled": False}}
+        webui.REGEN.update(running=False, stats=None, error=None)
+        with mock.patch.object(main, "load_config", lambda: cfg), \
+                mock.patch.object(main.artwork, "fetch_artwork",
+                                  lambda *a, **k: None):
+            code = self.req("/api/regenerate-all", "POST",
+                            body={"videos": False})
+            self.assertEqual(code, 200)
+            for _ in range(50):
+                if not webui.REGEN["running"]:
+                    break
+                _t.sleep(0.1)
+        self.assertFalse(webui.REGEN["running"])
+        self.assertIsNotNone(webui.REGEN["stats"])
+        self.assertEqual(webui.REGEN["stats"]["total"], 1)
+        webui.REGEN.update(stats=None, error=None)
+
+
 class TestComfyEndpoint(ServerFixture):
     def _post(self, body):
         r = urllib.request.Request(

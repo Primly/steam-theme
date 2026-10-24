@@ -719,6 +719,120 @@ class TestFetchLibrary(unittest.TestCase):
             main.fetch_library({"steam_api_key": ""}, lambda m: None)
 
 
+class TestRegenerateCache(unittest.TestCase):
+    """Regenerate All: walk cached themes, refetch missing art, queue
+    pending upscales, queue missing hero videos — never applies a theme."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(dir=main.BASE_DIR)
+        self.addCleanup(lambda: __import__("shutil").rmtree(
+            self.tmp, ignore_errors=True))
+        rel = os.path.relpath(self.tmp, main.BASE_DIR)
+        self.cfg = {"cache_dir": rel, "log_file": os.path.join(rel, "x.log"),
+                    "exclude_appids": [999], "hero": {"count": 2},
+                    "upscaling": {"enabled": False},
+                    "livewall": {"enabled": False}}
+        # complete theme (2 heroes + logo + icon)
+        c = os.path.join(self.tmp, "440")
+        os.makedirs(c)
+        for n in ("hero_1.jpg", "hero_2.jpg", "logo.jpg", "icon.png"):
+            with open(os.path.join(c, n), "wb") as f:
+                f.write(b"x")
+        with open(os.path.join(c, "palette.json"), "w") as f:
+            json.dump({"game_name": "TF2", "theme_name": "Red Sand"}, f)
+        # incomplete theme (only one hero)
+        c2 = os.path.join(self.tmp, "620")
+        os.makedirs(c2)
+        with open(os.path.join(c2, "hero_1.jpg"), "wb") as f:
+            f.write(b"x")
+        with open(os.path.join(c2, "palette.json"), "w") as f:
+            json.dump({"game_name": "Portal 2"}, f)
+        # excluded theme
+        os.makedirs(os.path.join(self.tmp, "999"))
+        self.fetch_calls = []
+        self.upscale_calls = []
+        self.video_calls = []
+
+        def fake_fetch(appid, name, icon_url, cfg, log, cache_key=None):
+            self.fetch_calls.append((appid, name))
+            out = {}
+            for n in ("hero_2.jpg", "logo.jpg", "icon.png"):
+                p = os.path.join(self.tmp, cache_key or str(appid), n)
+                with open(p, "wb") as f:
+                    f.write(b"y")
+                out[n.split(".")[0] if not n.startswith("hero") else
+                    "hero"] = p
+            return {"hero": out.get("hero"),
+                    "hero_candidates": [os.path.join(
+                        self.tmp, str(appid), "hero_1.jpg"),
+                        os.path.join(self.tmp, str(appid), "hero_2.jpg")],
+                    "logo": out["logo"], "icon": out["icon"]}
+        self.patch_main(main.artwork, "fetch_artwork", fake_fetch)
+        self.patch_main(main.time, "sleep", lambda s: None)
+
+    def patch_main(self, obj, name, value):
+        p = mock.patch.object(obj, name, value)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_complete_cache_is_left_alone(self):
+        stats = main.regenerate_cache(self.cfg, lambda m: None)
+        # 620 is incomplete -> fetched; 999 excluded; 440 complete
+        self.assertEqual(stats["total"], 3)
+        self.assertEqual(stats["skipped"], 1)
+        self.assertEqual(stats["complete"], 1)
+        self.assertEqual([c[0] for c in self.fetch_calls], [620])
+        self.assertEqual(stats["fetched"], 1)
+
+    def test_upscales_run_when_enabled(self):
+        self.cfg["upscaling"] = {"enabled": True}
+        self.patch_main(main, "_ufetch_upscale",
+                        lambda cfg, art, mons, name, log: 2)
+        stats = main.regenerate_cache(self.cfg, lambda m: None)
+        self.assertEqual(stats["upscaled"], 4)  # 2 per non-excluded theme
+        self.assertTrue(stats["upscaling"])
+
+    def test_videos_queue_for_heroes_without_clips(self):
+        self.cfg["livewall"] = {"enabled": True, "provider": "comfy"}
+
+        def fake_gen(cfg, heroes, ctx, key, title, dev, log, apply=True):
+            self.video_calls.append((key, len(heroes), ctx.get("game")))
+            return {"heroes": len(heroes), "cached": 0,
+                    "queued": len(heroes), "applied": False}
+        self.patch_main(main.livewall, "maybe_generate", fake_gen)
+        self.patch_main(main.theme_mod, "enumerate_monitors", lambda: [])
+        stats = main.regenerate_cache(self.cfg, lambda m: None)
+        self.assertEqual(stats["videos"], 4)    # 2 themes x 2 heroes
+        self.assertIn(("440", 2, "TF2"), self.video_calls)
+        self.assertIn(("620", 2, "Portal 2"), self.video_calls)
+
+    def test_videos_skipped_when_disabled(self):
+        self.cfg["livewall"] = {"enabled": True, "provider": "comfy"}
+        self.patch_main(main.theme_mod, "enumerate_monitors", lambda: [])
+        with mock.patch.object(main.livewall, "maybe_generate") as gen:
+            stats = main.regenerate_cache(self.cfg, lambda m: None,
+                                          with_videos=False)
+        gen.assert_not_called()
+        self.assertEqual(stats["videos"], 0)
+        self.assertFalse(stats["videos_on"])
+
+    def test_cancel_stops_early(self):
+        seen = []
+
+        def progress(i, total, name):
+            seen.append(i)
+        stats = main.regenerate_cache(
+            self.cfg, lambda m: None, progress=progress,
+            should_cancel=lambda: len(seen) >= 1)
+        self.assertTrue(stats["cancelled"])
+
+    def test_fetch_failure_is_counted(self):
+        self.patch_main(main.artwork, "fetch_artwork",
+                        lambda *a, **k: None)
+        stats = main.regenerate_cache(self.cfg, lambda m: None)
+        self.assertEqual(stats["failed"], 1)    # the incomplete theme
+
+
 class TestFetchLibraryUpscale(unittest.TestCase):
     """Ultimate Fetch's upscale option: runs the theme-time upscale pass per
     game (freshly fetched AND already-cached), credit-safe via the per-model

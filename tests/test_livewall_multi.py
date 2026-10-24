@@ -109,6 +109,19 @@ class TestEveryHeroQueued(MultiHeroFixture):
         self.assertEqual(len(self.q()), 2)   # only the missing two
         apply.assert_called_once()
 
+    def test_apply_false_never_touches_the_wallpaper(self):
+        # cache passes (Regenerate All) must never change what's on screen
+        _h, d, dst = livewall._hero_target(self.cfg, self.heroes[0], "440")
+        os.makedirs(d, exist_ok=True)
+        with open(dst, "wb") as f:
+            f.write(_mp4_bytes())
+        with mock.patch.object(livewall, "apply_we") as apply:
+            out = livewall.maybe_generate(self.cfg, self.heroes, {}, "440",
+                                          "T", "", self.log, apply=False)
+        apply.assert_not_called()
+        self.assertFalse(out["applied"])
+        self.assertEqual(len(self.q()), 2)   # the missing ones still queue
+
     def test_disabled_feature_does_nothing(self):
         self.cfg["livewall"]["enabled"] = False
         livewall.maybe_generate(self.cfg, self.heroes, {}, "440", "T", "",

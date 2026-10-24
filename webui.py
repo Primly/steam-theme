@@ -25,6 +25,9 @@ API:
   GET  /api/fetch-all-status    Ultimate Fetch progress
   POST /api/fetch-all-cancel    cancel a running Ultimate Fetch
   GET  /api/fetch-all-upscale-estimate   images an upscale pass would submit
+  POST /api/regenerate-all      {videos}  repair every cached theme
+  GET  /api/regenerate-all-status        Regenerate All progress
+  POST /api/regenerate-all-cancel        cancel a running Regenerate All
 """
 
 import json
@@ -280,6 +283,11 @@ FETCH_ALL = {"running": False, "done": 0, "total": 0, "current": "",
              "cancel_requested": False, "stats": None, "error": None,
              "upscale": False}
 
+# Regenerate All (cached themes: refetch gaps, upscales, hero videos)
+REGEN = {"running": False, "done": 0, "total": 0, "current": "",
+         "cancel_requested": False, "stats": None, "error": None,
+         "videos": True}
+
 
 def _gallery():
     """Every cached game theme, for the UI gallery."""
@@ -435,6 +443,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"ok": True, "themes": _gallery()})
         elif path == "/api/fetch-all-status":
             self._send(200, dict(FETCH_ALL))
+        elif path == "/api/regenerate-all-status":
+            self._send(200, dict(REGEN))
         elif path == "/api/comfy-default-workflow":
             import upscale as _up
             self._send(200, {"ok": True, "workflow": _up.DEFAULT_COMFY_WORKFLOW})
@@ -601,10 +611,63 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"ok": True,
                              "detail": f"hero #{index + 1} selected — regenerating "
                                        "(a new hero may need one upscale; watch the log)"})
+        elif path == "/api/regenerate-all":
+            if REGEN["running"]:
+                self._send(409, {"ok": False,
+                                 "error": "Regenerate All is already "
+                                          "running"})
+                return
+            if FETCH_ALL["running"]:
+                self._send(409, {"ok": False,
+                                 "error": "Ultimate Fetch is running — "
+                                          "wait for it to finish first"})
+                return
+            import main as app
+            cfg = app.load_config()
+            with_videos = bool(body.get("videos", True))
+            REGEN.update(running=True, done=0, total=0, current="",
+                         cancel_requested=False, stats=None, error=None,
+                         videos=with_videos)
+
+            def work():
+                log = app._log_factory(cfg)
+                try:
+                    stats = app.regenerate_cache(
+                        cfg, log, with_videos=with_videos,
+                        should_cancel=lambda: REGEN["cancel_requested"],
+                        progress=lambda i, total, name: REGEN.update(
+                            done=i, total=total, current=name))
+                    REGEN["stats"] = stats
+                except Exception as e:
+                    REGEN["error"] = str(e)
+                    log(f"regenerate all error: {e}")
+                finally:
+                    REGEN["running"] = False
+                    REGEN["current"] = ""
+            threading.Thread(target=work, daemon=True).start()
+            self._send(200, {"ok": True,
+                             "detail": "Regenerate All started — artwork "
+                                       "gaps refetched, pending upscales "
+                                       "submitted, missing hero videos "
+                                       "queued. Watch the progress bar or "
+                                       "the activity log"})
+        elif path == "/api/regenerate-all-cancel":
+            if not REGEN["running"]:
+                self._send(200, {"ok": False, "error": "nothing is running"})
+                return
+            REGEN["cancel_requested"] = True
+            self._send(200, {"ok": True,
+                             "detail": "cancelling after the current "
+                                       "theme…"})
         elif path == "/api/fetch-all":
             if FETCH_ALL["running"]:
                 self._send(409, {"ok": False,
                                  "error": "Ultimate Fetch is already running"})
+                return
+            if REGEN["running"]:
+                self._send(409, {"ok": False,
+                                 "error": "Regenerate All is running — "
+                                          "wait for it to finish first"})
                 return
             import main as app
             cfg = app.load_config()
