@@ -190,7 +190,7 @@
         }
       ],
       "widgets_values_named": {
-        "enable_upscale": false,
+        "enable_upscale": true,
         "upscale_factor": 2,
         "upscale_model": "prob-4",
         "compression": 0,

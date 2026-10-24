@@ -542,12 +542,13 @@ display:
   `config.json` so it's active on its next launch. Target monitor defaults
   to the hero display; `livewall.we_monitor` overrides. On other platforms
   videos are generated and cached, just not applied.
-- **Topaz finishing defaults**: the shipped `TopazVideoAI` node has
-  `enable_upscale` **off** (credit safety), **frame interpolation on**
-  (`apf-2`, 24 fps × 2.5 → 60 fps, buttery motion) and **`use_gpu` off**
-  so the local Topaz pass runs on the CPU and doesn't fight the diffusion
-  render for the GPU. All three are plain values in the workflow JSON if
-  you want them back.
+- **Topaz finishing defaults**: the shipped `TopazVideoAI` node runs the
+  **local** Topaz Video AI (no cloud credits): **×2 upscale** (the 2560×720
+  render lands on 5120×1440), **frame interpolation on** (`apf-2`, 24 fps ×
+  2.5 → 60 fps) and **`use_gpu` off** — the GPU encoder path trips the
+  node's FFmpeg fallback (`Trailing option(s) found in the command`), so
+  CPU-side finishing is the reliable setting. All values are plain in the
+  workflow JSON.
 
 ## 🌈 RGB lighting
 
@@ -755,6 +756,13 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.9.6** — **Topaz video finishing: ×2 upscale on**: the shipped
+  `TopazVideoAI` node now upscales ×2 (2560×720 → 5120×1440) on top of the
+  `apf-2` interpolation, staying CPU-side (`use_gpu` false) — with
+  `use_gpu` on, the node's FFmpeg encoder fallback breaks
+  (`Trailing option(s) found in the command` / *At least one output file
+  must be specified*). It's the local Topaz Video AI, so this spends no
+  cloud credits.
 - **1.9.5** — **Topaz finishing defaults for video**: the shipped
   `TopazVideoAI` node now enables frame interpolation with the `apf-2`
   model (input 24 fps × 2.5 → 60 fps) and runs on the CPU (`use_gpu`

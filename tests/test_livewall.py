@@ -53,11 +53,12 @@ class TestGraphConversion(LiveWallFixture):
         self.assertIn("LoadImage", types)
         self.assertIn("TopazVideoAI", types)
         self.assertIn("GetVideoComponents", types)
-        # credit-safe, CPU-side finishing defaults: no video upscale, but
-        # frame interpolation on apf-2 (24 fps x 2.5 -> 60 fps) so the
-        # render and the local Topaz pass don't fight over the GPU
+        # local Topaz finishing defaults: x2 upscale (2560x720 ->
+        # 5120x1440), apf-2 interpolation (24 fps x 2.5 -> 60 fps), CPU
+        # side (use_gpu=true trips the node's FFmpeg encoder fallback)
         tz = [n for n in api.values() if n["class_type"] == "TopazVideoAI"][0]
-        self.assertFalse(tz["inputs"]["enable_upscale"])
+        self.assertTrue(tz["inputs"]["enable_upscale"])
+        self.assertEqual(tz["inputs"]["upscale_factor"], 2)
         self.assertTrue(tz["inputs"]["enable_interpolation"])
         self.assertFalse(tz["inputs"]["use_gpu"])
         self.assertEqual(tz["inputs"]["interpolation_model"], "apf-2")

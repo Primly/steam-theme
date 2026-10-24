@@ -414,8 +414,9 @@
     <code>{appearance}</code>, <code>{palette_mode}</code> + your naming prompt's custom keys — the default leans on <code>{loop_prompt}</code>:
     ask your naming prompt's JSON for a <code>"loop_prompt"</code> key describing the game's ambient motion, and the VLM authors each video individually.
     Every <code>LoadImage</code> node receives the hero image, so the first and last frames match
-    and the loop returns to the art. <b>Topaz note:</b> the default ships with the video-upscale
-    node OFF — flipping <code>enable_upscale</code> on spends Topaz credits per video.</p>
+    and the loop returns to the art. <b>Topaz note:</b> the default finishes with the <i>local</i>
+    Topaz Video AI — ×2 upscale, <code>apf-2</code> interpolation, CPU side
+    (<code>use_gpu</code> on trips the node's FFmpeg fallback). No cloud credits involved.</p>
   <div class="row">
     <div class="switch"><input type="checkbox" id="lwAllHeroes"><span>Make a video for <b>every</b> hero image (rotation swaps between them)</span></div>
   </div>
