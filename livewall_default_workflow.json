@@ -167,11 +167,11 @@
         0,
         0,
         0,
-        false,
+        true,
         24,
         2.5,
         "apf-2",
-        true,
+        false,
         "C:\\Program Files\\Topaz Labs LLC\\Topaz Video",
         true,
         true,
@@ -199,11 +199,11 @@
         "halo": 0,
         "blur": 0,
         "preblur": 0,
-        "enable_interpolation": false,
+        "enable_interpolation": true,
         "input_fps": 24,
         "interpolation_multiplier": 2.5,
         "interpolation_model": "apf-2",
-        "use_gpu": true,
+        "use_gpu": false,
         "topaz_ffmpeg_path": "C:\\Program Files\\Topaz Labs LLC\\Topaz Video",
         "force_topaz_ffmpeg": true,
         "save_video": true,
@@ -402,7 +402,7 @@
         "previewExposures": []
       },
       "widgets_values": [
-        "Use the provided start image as the first frame and the provided end image as the final frame anchor. Ultra‑wide cinematic sci‑fi dark‑fantasy wallpaper, painterly digital‑art style. A blood‑stained pale warrior in bulky power armor stands motionless at center, atop a pile of defeated spiked and tentacled machine‑creatures. Only slow, subtle ambient life: thin volumetric fog drifts horizontally through the ruined teal‑and‑red cityscape, faint embers and ash particles float up and settle, the giant moon glows softly with slowly shifting cloud cover, distant broken spires shimmer in atmospheric haze, the warrior's chest rises and falls with a slow breath and his eyes flicker faintly as he wipes sweat from his brow with his left hand. Extremely low, symmetric camera push‑in that eases back out (loop‑safe). Moody teal‑cyan key light with deep red rim accents, high detail, cinematic lighting, seamless loop.",
+        "Use the provided start image as the first frame and the provided end image as the final frame anchor. Ultra\u2011wide cinematic sci\u2011fi dark\u2011fantasy wallpaper, painterly digital\u2011art style. A blood\u2011stained pale warrior in bulky power armor stands motionless at center, atop a pile of defeated spiked and tentacled machine\u2011creatures. Only slow, subtle ambient life: thin volumetric fog drifts horizontally through the ruined teal\u2011and\u2011red cityscape, faint embers and ash particles float up and settle, the giant moon glows softly with slowly shifting cloud cover, distant broken spires shimmer in atmospheric haze, the warrior's chest rises and falls with a slow breath and his eyes flicker faintly as he wipes sweat from his brow with his left hand. Extremely low, symmetric camera push\u2011in that eases back out (loop\u2011safe). Moody teal\u2011cyan key light with deep red rim accents, high detail, cinematic lighting, seamless loop.",
         false,
         12,
         2560,
@@ -1904,10 +1904,10 @@
               "secondTabWidth": 65
             },
             "widgets_values": [
-              "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, unreadable text on shirt or hat, incorrect lettering on cap (“PNTR”), incorrect t-shirt slogan (“JUST DO IT”), missing microphone, misplaced microphone, inconsistent perspective, camera shake, incorrect depth of field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, smiling, laughing, exaggerated sadness, wrong gaze direction, eyes looking at camera, mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, off-sync audio, missing sniff sounds, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, missing door or shelves, missing shallow depth of field, flat lighting, inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts."
+              "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, unreadable text on shirt or hat, incorrect lettering on cap (\u201cPNTR\u201d), incorrect t-shirt slogan (\u201cJUST DO IT\u201d), missing microphone, misplaced microphone, inconsistent perspective, camera shake, incorrect depth of field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, smiling, laughing, exaggerated sadness, wrong gaze direction, eyes looking at camera, mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, off-sync audio, missing sniff sounds, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, missing door or shelves, missing shallow depth of field, flat lighting, inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts."
             ],
             "widgets_values_named": {
-              "text": "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, unreadable text on shirt or hat, incorrect lettering on cap (“PNTR”), incorrect t-shirt slogan (“JUST DO IT”), missing microphone, misplaced microphone, inconsistent perspective, camera shake, incorrect depth of field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, smiling, laughing, exaggerated sadness, wrong gaze direction, eyes looking at camera, mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, off-sync audio, missing sniff sounds, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, missing door or shelves, missing shallow depth of field, flat lighting, inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts."
+              "text": "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, unreadable text on shirt or hat, incorrect lettering on cap (\u201cPNTR\u201d), incorrect t-shirt slogan (\u201cJUST DO IT\u201d), missing microphone, misplaced microphone, inconsistent perspective, camera shake, incorrect depth of field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, smiling, laughing, exaggerated sadness, wrong gaze direction, eyes looking at camera, mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, off-sync audio, missing sniff sounds, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, missing door or shelves, missing shallow depth of field, flat lighting, inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts."
             },
             "color": "#323",
             "bgcolor": "#535"

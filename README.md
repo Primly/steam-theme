@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.9.4-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.9.5-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -542,10 +542,12 @@ display:
   `config.json` so it's active on its next launch. Target monitor defaults
   to the hero display; `livewall.we_monitor` overrides. On other platforms
   videos are generated and cached, just not applied.
-- **Topaz video upscale**: the default workflow carries a `TopazVideoAI`
-  node but ships with `enable_upscale` **off** (credit safety). Flip it on
-  in the JSON for Topaz-enhanced video — it spends Topaz credits per
-  video.
+- **Topaz finishing defaults**: the shipped `TopazVideoAI` node has
+  `enable_upscale` **off** (credit safety), **frame interpolation on**
+  (`apf-2`, 24 fps × 2.5 → 60 fps, buttery motion) and **`use_gpu` off**
+  so the local Topaz pass runs on the CPU and doesn't fight the diffusion
+  render for the GPU. All three are plain values in the workflow JSON if
+  you want them back.
 
 ## 🌈 RGB lighting
 
@@ -753,6 +755,12 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.9.5** — **Topaz finishing defaults for video**: the shipped
+  `TopazVideoAI` node now enables frame interpolation with the `apf-2`
+  model (input 24 fps × 2.5 → 60 fps) and runs on the CPU (`use_gpu`
+  false) so the local Topaz pass doesn't contend with the diffusion
+  render on the same GPU; `enable_upscale` stays off. Locked in by
+  assertions in the graph-conversion test.
 - **1.9.4** — **a video for every hero image**: in rotate mode every hero
   candidate now gets its own looping clip (queued and rendered one at a
   time by a background worker, so a theme apply never blocks for an hour),

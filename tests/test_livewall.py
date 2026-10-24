@@ -53,6 +53,15 @@ class TestGraphConversion(LiveWallFixture):
         self.assertIn("LoadImage", types)
         self.assertIn("TopazVideoAI", types)
         self.assertIn("GetVideoComponents", types)
+        # credit-safe, CPU-side finishing defaults: no video upscale, but
+        # frame interpolation on apf-2 (24 fps x 2.5 -> 60 fps) so the
+        # render and the local Topaz pass don't fight over the GPU
+        tz = [n for n in api.values() if n["class_type"] == "TopazVideoAI"][0]
+        self.assertFalse(tz["inputs"]["enable_upscale"])
+        self.assertTrue(tz["inputs"]["enable_interpolation"])
+        self.assertFalse(tz["inputs"]["use_gpu"])
+        self.assertEqual(tz["inputs"]["interpolation_model"], "apf-2")
+        self.assertTrue(tz["inputs"]["save_video"])
         # the subgraph was flattened, not passed through by UUID
         self.assertNotIn("cf70afc4-5a03-47ce-8210-734b1de6c6bc", types)
         # every link input points at a real node
