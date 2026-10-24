@@ -289,9 +289,43 @@ REGEN = {"running": False, "done": 0, "total": 0, "current": "",
          "videos": True}
 
 
-def _gallery():
-    """Every cached game theme, for the UI gallery."""
+_NAMES = {"at": 0.0, "map": {}}
+
+
+def _game_names(cfg):
+    """cache-key -> game name for gallery tiles, cached for 10 minutes.
+    Steam library covers appid keys; custom_games covers custom_<slug>."""
+    import time as _t
+    now = _t.time()
+    if _NAMES["map"] and now - _NAMES["at"] < 600:
+        return _NAMES["map"]
+    import re as _re
     import main as app
+    names = {}
+    try:
+        steam_key = cfg.get("steam_api_key")
+        if steam_key:
+            sid = cfg.get("steam_id64") or app.steamdetect.get_steam_id64()
+            for g in app.steamdetect.get_owned_games(steam_key, sid):
+                if g.get("appid"):
+                    names[str(g["appid"])] = g.get("name") or ""
+    except Exception:
+        pass
+    for g in cfg.get("custom_games") or []:
+        if not isinstance(g, dict) or not g.get("name"):
+            continue
+        slug = "custom_" + _re.sub(r"[^a-z0-9]+", "-",
+                                    g["name"].lower()).strip("-")
+        names[slug] = g["name"]
+    _NAMES.update(at=now, map=names)
+    return names
+
+
+def _gallery():
+    """Every cached theme for the UI gallery — themed entries AND games
+    whose art is cached but that were never displayed (Ultimate Fetch)."""
+    import main as app
+    import artwork
     cfg = app.load_config()
     root = app.cfg_path(cfg, "cache_dir", "cache")
     items = []
@@ -301,20 +335,31 @@ def _gallery():
         return items
     state = app.load_state(cfg)
     current = str(state.get("last_cache_key") or state.get("last_appid") or "")
+    names = _game_names(cfg)
     for entry in entries:
         folder = app.safe_join(root, entry)
         if not os.path.isdir(folder):
             continue
-        try:
-            with open(os.path.join(folder, "palette.json"), encoding="utf-8") as f:
-                p = json.load(f)
-        except (OSError, ValueError):
-            continue
-        import artwork
         cands = artwork.hero_candidates(folder)
+        try:
+            with open(os.path.join(folder, "palette.json"),
+                      encoding="utf-8") as f:
+                p = json.load(f)
+            if not isinstance(p, dict):
+                p = {}
+        except (OSError, ValueError):
+            p = {}
+        if not cands and not p:
+            continue   # no art and never themed: nothing to show
+        themed = bool(p) and os.path.exists(
+            os.path.join(folder, app.theme_mod.THEME_FILENAME))
+        game = (p.get("game_name") or names.get(entry)
+                or (f"app {entry}" if entry.isdigit() else entry))
         items.append({
             "key": entry,
-            "theme_name": p.get("theme_name") or entry,
+            "theme_name": p.get("theme_name") or game,
+            "game_name": game,
+            "themed": themed,
             "accent": p.get("accent"),
             "appearance": p.get("appearance"),
             "has_art": bool(cands),
@@ -322,6 +367,8 @@ def _gallery():
             "hero_active": artwork.hero_choice(folder),
             "current": entry == current,
         })
+    # themed first, then alphabetical by game name
+    items.sort(key=lambda t: (not t["themed"], t["game_name"].lower()))
     return items
 
 
@@ -726,6 +773,17 @@ class Handler(BaseHTTPRequestHandler):
                 log = app._log_factory(cfg)
                 try:
                     app.reapply_from_cache(cfg, log, key)
+                except FileNotFoundError:
+                    # art is cached but the theme was never generated
+                    # (Ultimate Fetch / Regenerate All): build it now
+                    if key.isdigit():
+                        log(f"gallery: '{key}' has art but no theme yet — "
+                            "generating it from the cached art")
+                        app.check_once(cfg, log, force=True,
+                                       appid_override=int(key))
+                    else:
+                        log(f"gallery: '{key}' has no cached theme — it "
+                            "will be themed next time it is played")
                 except Exception as e:
                     log(f"gallery apply error: {e}")
             threading.Thread(target=work, daemon=True).start()

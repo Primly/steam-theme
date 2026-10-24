@@ -207,6 +207,91 @@ class TestFetchAllEndpoints(ServerFixture):
         self.assertEqual(data["games"], 2)
 
 
+class TestGalleryAllThemes(ServerFixture):
+    """The gallery lists EVERY cached game — including art-only entries
+    that were fetched (Ultimate Fetch) but never displayed."""
+
+    def setUp(self):
+        super().setUp()
+        import main, tempfile
+        self.tmp = tempfile.mkdtemp(dir=main.BASE_DIR)
+        self.addCleanup(lambda: __import__("shutil").rmtree(
+            self.tmp, ignore_errors=True))
+        rel = os.path.relpath(self.tmp, main.BASE_DIR)
+        self.cfg = {"cache_dir": rel,
+                    "state_file": os.path.join(rel, "state.json"),
+                    "log_file": os.path.join(rel, "x.log"),
+                    "steam_api_key": "k", "steam_id64": "1"}
+        # themed entry
+        c1 = os.path.join(self.tmp, "440")
+        os.makedirs(os.path.join(c1, "slides"))
+        os.makedirs(c1, exist_ok=True)
+        for n in ("hero_1.jpg", "logo.jpg", "icon.png"):
+            open(os.path.join(c1, n), "wb").write(b"x")
+        open(os.path.join(c1, main.theme_mod.THEME_FILENAME), "w").write("[Theme]")
+        json.dump({"theme_name": "Red Sand", "game_name": "TF2",
+                   "accent": "#aa3333", "appearance": "dark"},
+                  open(os.path.join(c1, "palette.json"), "w"))
+        # art-only entry (fetched, never themed)
+        c2 = os.path.join(self.tmp, "570")
+        os.makedirs(c2)
+        for n in ("hero_1.jpg", "hero_2.jpg", "logo.jpg"):
+            open(os.path.join(c2, n), "wb").write(b"x")
+        # empty folder: nothing to show
+        os.makedirs(os.path.join(self.tmp, "730"))
+        self.themes = None
+        p1 = mock.patch.object(main, "load_config", lambda: self.cfg)
+        p2 = mock.patch.object(webui, "_game_names",
+                               lambda cfg: {"570": "Dota 2"})
+        for p in (p1, p2):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_lists_themed_and_unthemed(self):
+        r = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/gallery")
+        with urllib.request.urlopen(r, timeout=5) as resp:
+            data = json.loads(resp.read())
+        themes = {t["key"]: t for t in data["themes"]}
+        self.assertEqual(set(themes), {"440", "570"})   # 730 skipped
+        self.assertTrue(themes["440"]["themed"])
+        self.assertEqual(themes["440"]["theme_name"], "Red Sand")
+        self.assertFalse(themes["570"]["themed"])
+        self.assertEqual(themes["570"]["game_name"], "Dota 2")
+        self.assertEqual(themes["570"]["hero_count"], 2)
+        # themed entries sort first
+        self.assertEqual(data["themes"][0]["key"], "440")
+
+    def test_gallery_includes_even_never_themed_without_names(self):
+        with mock.patch.object(webui, "_game_names", lambda cfg: {}):
+            r = urllib.request.Request(
+                f"http://127.0.0.1:{self.port}/api/gallery")
+            with urllib.request.urlopen(r, timeout=5) as resp:
+                data = json.loads(resp.read())
+        node = next(t for t in data["themes"] if t["key"] == "570")
+        self.assertEqual(node["game_name"], "app 570")
+
+    def test_apply_unthemed_generates_from_cached_art(self):
+        import main, time as _t
+        calls = []
+
+        def apply_from_cache(cfg, log, key):
+            raise FileNotFoundError("no cached theme")
+
+        def check(cfg, log, force=False, appid_override=None):
+            calls.append((force, appid_override))
+        with mock.patch.object(main, "reapply_from_cache",
+                                apply_from_cache), \
+                mock.patch.object(main, "check_once", check):
+            self.assertEqual(self.req("/api/apply-theme", "POST",
+                                      body={"key": "570"}), 200)
+            for _ in range(50):
+                if calls:
+                    break
+                _t.sleep(0.1)
+        self.assertEqual(calls, [(True, 570)])
+
+
 class TestRegenEndpoints(ServerFixture):
     def test_status_shape(self):
         r = urllib.request.Request(

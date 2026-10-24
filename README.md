@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.9.5-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.10.1-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -300,7 +300,7 @@ the hero, so wordmarks stay crisp instead of being zoomed and cropped.
 | **Monitors** | detected displays → role mapping |
 | **Ultimate Fetch** | pre-cache artwork for the whole Steam library, with progress + cancel; optional upscaling (Topaz credits with an estimate, or free ComfyUI GPU time) |
 | **Regenerate All** | repair every cached theme: refetch missing art, run pending upscales, queue missing hero videos (background, never applies a theme) |
-| **Theme gallery** | thumbnails of every cached theme; re-apply instantly |
+| **Theme gallery** | thumbnails of every cached game — themed entries re-apply instantly, art-only entries show as *not themed yet* and generate from their cached art |
 | **Activity log** | live tail of what the service is doing |
 
 The background service **re-reads config.json every cycle** — saving in the
@@ -712,7 +712,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 234 tests
+python -m unittest discover -s tests -v   # 237 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -743,6 +743,7 @@ CI. Platform-specific tests skip cleanly on the other OS.
 | SignalRGB test fails | Pro subscription, or check the API URL in Extras |
 | OpenRGB "SDK server not reachable" | Run `openrgb --server` (and autostart it); check host/port in Extras |
 | Topaz test/upscale fails | Key invalid or out of credits — the Test button only verifies the key |
+| Gallery is missing games | The gallery lists every cache folder that has artwork — a missing game was never fetched (run *Ultimate Fetch*, or play it once). *not themed yet* entries just need “Generate this theme” |
 | ComfyUI test fails | ComfyUI must be installed and running at the host/port in the Upscaling section; the Test button checks reachability **and** your workflow JSON |
 | ComfyUI upscales never seem to run | *Defer while gaming* is on (default): jobs queue while you play and drain when you stop — the log names every deferred job. Also check the per-image timeout |
 | ComfyUI job fails on the GPU side | Read the log line (`comfy job failed: …`) — usually a model missing from ComfyUI (the built-in default needs SDXL + the 4x-UltraSharp upscaler) or an out-of-memory tile size |
@@ -757,6 +758,14 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.10.1** — **the gallery shows every cached game**, not just the ones
+  that were displayed: entries with artwork but no generated theme
+  (Ultimate Fetch / Regenerate All) now appear as *not themed yet* — named
+  from the Steam library (cached 10 min) or your custom-games list — and
+  their button generates the theme from the cached art
+  (`check_once(appid_override=…)`, no refetch needed). Themed entries still
+  apply instantly; themed sort first, then alphabetical. 3 new tests (237
+  total).
 - **1.10.0** — **Regenerate All**: a maintenance pass over every theme in
   the cache. For each one it refetches absent artwork (gap-filling, so
   existing picks and candidates are untouched), runs the upscale pass for

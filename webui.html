@@ -551,8 +551,10 @@
 
 <section>
   <h2>Theme gallery</h2>
-  <p class="hint">Every game theme in the local cache. Re-apply one instantly — no API calls, no Topaz credits.
-    Applying one pauses auto-theming until you play another game (a “manual hold”).</p>
+  <p class="hint">Every game in the local cache — themed entries re-apply instantly (no API calls,
+    no Topaz credits); entries marked <i>not themed yet</i> have their artwork cached but were never
+    displayed, and “Generate this theme” builds the theme from that art. Applying one pauses
+    auto-theming until you play another game (a “manual hold”).</p>
   <div id="gallery"></div>
 </section>
 
@@ -1004,17 +1006,27 @@ async function loadGallery() {
       card.appendChild(img);
     }
     const nm = document.createElement("div");
-    nm.className = "cname"; nm.textContent = t.theme_name || t.key;
+    nm.className = "cname";
+    nm.textContent = t.themed ? (t.theme_name || t.key)
+                              : (t.game_name || t.key);
     const dt = document.createElement("div");
     dt.className = "cdetail";
-    let detail = `${t.appearance || "?"} · accent ${t.accent || "?"}`;
-    if (t.hero_count > 1)
-      detail += ((cfg.hero || {}).mode === "rotate"
-                 ? ` · rotating ${t.hero_count} heroes`
-                 : ` · ${t.hero_count} heroes`);
+    let detail;
+    if (!t.themed) {
+      detail = "art cached · not themed yet";
+      if (t.hero_count)
+        detail += ` · ${t.hero_count} hero${t.hero_count === 1 ? "" : "es"}`;
+    } else {
+      detail = `${t.appearance || "?"} · accent ${t.accent || "?"}`;
+      if (t.hero_count > 1)
+        detail += ((cfg.hero || {}).mode === "rotate"
+                   ? ` · rotating ${t.hero_count} heroes`
+                   : ` · ${t.hero_count} heroes`);
+    }
     dt.textContent = detail;
     const btn = document.createElement("button");
-    btn.textContent = t.current ? "Current theme" : "Apply this theme";
+    btn.textContent = t.current ? "Current theme"
+                  : t.themed ? "Apply this theme" : "Generate this theme";
     btn.disabled = !!t.current;
     btn.onclick = async () => {
       btn.disabled = true;
