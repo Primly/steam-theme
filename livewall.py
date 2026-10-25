@@ -598,8 +598,19 @@ def generate(cfg, hero_path, dst, context, log=print, defer=True):
         if dropped:
             log(f"  [livewall] unknown workflow placeholders ignored: "
                 f"{', '.join(sorted(set(dropped)))}")
-        # 4) submit + poll
-        r = requests.post(base + "/prompt", timeout=60, json={"prompt": api})
+        # 4) submit + poll (include the editable workflow so history's
+        #    "Open as workflow in a new tab" can restore the graph)
+        payload = {"prompt": api}
+        try:
+            raw_for_meta = (lw.get("workflow") or "").strip()
+            if not raw_for_meta:
+                raw_for_meta = default_workflow()
+            meta_obj = json.loads(raw_for_meta)
+            if isinstance(meta_obj, dict):
+                payload["extra_data"] = {"extra_pnginfo": {"workflow": meta_obj}}
+        except (json.JSONDecodeError, OSError):
+            pass
+        r = requests.post(base + "/prompt", timeout=60, json=payload)
         if r.status_code != 200:
             log(f"  [livewall] submit failed: HTTP {r.status_code} "
                 f"{r.text[:300]}")

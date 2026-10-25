@@ -719,7 +719,18 @@ def _comfy(src, dst, cfg, log, target_w, target_h, context=None,
         if dropped:
             log(f"  [up] unknown workflow placeholders ignored: "
                 f"{', '.join(sorted(set(dropped)))}")
-        r = requests.post(base + "/prompt", timeout=60, json={"prompt": wf})
+        # include editable workflow so "Open as workflow in new tab" works
+        payload = {"prompt": wf}
+        try:
+            raw_wf = _workflow_text(c, role)
+            if not raw_wf:
+                raw_wf = DEFAULT_COMFY_WORKFLOW
+            meta = json.loads(raw_wf)
+            if isinstance(meta, dict):
+                payload["extra_data"] = {"extra_pnginfo": {"workflow": meta}}
+        except (json.JSONDecodeError, OSError):
+            pass
+        r = requests.post(base + "/prompt", timeout=60, json=payload)
         if r.status_code != 200:
             log(f"  [up] comfy submit failed: HTTP {r.status_code} "
                 f"{r.text[:200]}")
