@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.10.1-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.10.2-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -758,6 +758,7 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.10.2** — ComfyUI: include editable workflow in history so "Open as workflow in a new tab" works for every job the app queues (upscale + live-wallpaper video).
 - **1.10.1** — **the gallery shows every cached game**, not just the ones
   that were displayed: entries with artwork but no generated theme
   (Ultimate Fetch / Regenerate All) now appear as *not themed yet* — named
