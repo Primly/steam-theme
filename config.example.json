@@ -50,7 +50,8 @@
     "workflow": "",
     "workflows": {"hero": "", "logo": "", "icon": ""},
     "defer_while_gaming": true,
-    "timeout_seconds": 900
+    "timeout_seconds": 900,
+    "unload_models_after": true
   },
   "livewall": {
     "enabled": false,
@@ -59,6 +60,7 @@
     "port": 8188,
     "workflow": "",
     "all_heroes": true,
+    "topaz_finish": true,
     "defer_while_gaming": true,
     "timeout_seconds": 3600,
     "we_monitor": -1

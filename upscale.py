@@ -470,6 +470,23 @@ def _comfy_base(cfg):
     return f"http://{host}:{port}"
 
 
+def _unload_comfy_models(cfg, base, log=print):
+    """Unload ComfyUI's models from RAM/VRAM after a generation completes.
+    Controlled by comfy.unload_models_after (default on). No-op when disabled,
+    offline, or when the server rejects the call — never raises."""
+    if not cfg.get("comfy", {}).get("unload_models_after", True):
+        return
+    if not base:
+        return
+    try:
+        r = requests.post(base + "/free", timeout=30,
+                          json={"unload_models": True, "free_memory": True})
+        if r.status_code == 200:
+            log("  [comfy] models unloaded from RAM/VRAM")
+    except Exception:
+        pass
+
+
 def validate_workflow(text):
     """Validate an Export-API workflow string for upscaling duty. Empty text
     means the built-in default. Returns (parsed_dict_or_None, error_or_None).
@@ -795,6 +812,8 @@ def _comfy(src, dst, cfg, log, target_w, target_h, context=None,
     except Exception as e:
         log(f"  [up] comfy error: {e}")
         return None
+    finally:
+        _unload_comfy_models(cfg, base, log)
 
 
 def maybe_upscale(path, target_w, target_h, cfg, log=print, context=None,

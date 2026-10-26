@@ -367,6 +367,9 @@
   <div class="row">
     <div class="switch"><input type="checkbox" id="comfyDefer"><span>While a game is running, queue upscales and run them when you stop playing</span></div>
   </div>
+  <div class="row">
+    <div class="switch"><input type="checkbox" id="comfyUnload"><span>Unload models from RAM/VRAM after each generation (upscale <i>and</i> video)</span></div>
+  </div>
   <p class="hint">Keeps the GPU free for the game. Queued upscales drain automatically when no
     game is detected, and if they belong to the theme on screen it's re-applied with the
     crisp versions.</p>
@@ -418,7 +421,10 @@
     Topaz Video AI — ×2 upscale, <code>apf-2</code> interpolation, CPU side
     (<code>use_gpu</code> on trips the node's FFmpeg fallback). No cloud credits involved.</p>
   <div class="row">
-    <div class="switch"><input type="checkbox" id="lwAllHeroes"><span>Make a video for <b>every</b> hero image (rotation swaps between them)</span></div>
+    <div class="switch"><input type="checkbox" id="lwAllHeroes"><span>Make a video for <b>every</b> hero image (unchecked: only the hero currently displayed gets one)</span></div>
+  </div>
+  <div class="row">
+    <div class="switch"><input type="checkbox" id="lwTopazFinish"><span>Topaz finish (local Topaz Video AI ×2 upscale + frame interpolation)</span></div>
   </div>
   <div class="row">
     <div class="switch"><input type="checkbox" id="lwDefer"><span>While a game is running, queue the video and generate it when you stop playing</span></div>
@@ -795,6 +801,7 @@ async function load() {
   setV("comfyWfHero", cwfs.hero || ""); setV("comfyWfLogo", cwfs.logo || "");
   setV("comfyWfIcon", cwfs.icon || "");
   setC("comfyDefer", cm.defer_while_gaming !== false);
+  setC("comfyUnload", cm.unload_models_after !== false);
   setV("comfyTimeout", cm.timeout_seconds ?? 900);
   providerChanged();
   const lw = cfg.livewall || {};
@@ -803,6 +810,7 @@ async function load() {
   setV("lwHost", lw.host || "127.0.0.1"); setV("lwPort", lw.port ?? 8188);
   setV("lwWorkflow", lw.workflow || "");
   setC("lwAllHeroes", lw.all_heroes !== false);
+  setC("lwTopazFinish", lw.topaz_finish !== false);
   setC("lwDefer", lw.defer_while_gaming !== false);
   setV("lwTimeout", lw.timeout_seconds ?? 3600);
   setV("lwMonitor", String(lw.we_monitor ?? -1));
@@ -870,6 +878,7 @@ async function save(apply) {
   cfg.comfy = {host: v("comfyHost") || "127.0.0.1",
                port: Math.min(65535, Math.max(1, parseInt(v("comfyPort")) || 8188)),
                defer_while_gaming: document.getElementById("comfyDefer").checked,
+               unload_models_after: document.getElementById("comfyUnload").checked,
                timeout_seconds: Math.min(7200, Math.max(60, parseInt(v("comfyTimeout")) || 900))};
   if (cw && cw !== COMFY_DEFAULT_WORKFLOW) cfg.comfy.workflow = cw;  // default/empty = built-in
   else delete cfg.comfy.workflow;  // Reset/clear must actually persist
@@ -885,6 +894,7 @@ async function save(apply) {
                   host: v("lwHost") || "127.0.0.1",
                   port: Math.min(65535, Math.max(1, parseInt(v("lwPort")) || 8188)),
                   all_heroes: document.getElementById("lwAllHeroes").checked,
+                  topaz_finish: document.getElementById("lwTopazFinish").checked,
                   defer_while_gaming: document.getElementById("lwDefer").checked,
                   timeout_seconds: Math.min(21600, Math.max(60, parseInt(v("lwTimeout")) || 3600))};
   const lwm = parseInt(v("lwMonitor"));

@@ -305,10 +305,14 @@ def repair_json(text):
     return "".join(out), n
 
 
-def parse_workflow(text, log=None):
+def parse_workflow(text, log=None, topaz_finish=True):
     """Parse the configured workflow text into a flat API dict, accepting
     both the API format and the graph (save) format. Returns
-    (api_dict or None, error or None)."""
+    (api_dict or None, error or None).
+
+    topaz_finish=False removes any TopazVideoAI node so the raw diffusion
+    frames flow straight into a CreateVideo/SaveVideo (no local Topaz Video
+    AI license required)."""
     raw = (text or "").strip()
     if not raw:
         raw = default_workflow()
@@ -346,6 +350,14 @@ def parse_workflow(text, log=None):
     types = {str(n.get("class_type")) for n in api.values()}
     if "LoadImage" not in types:
         return None, "missing a LoadImage node (the hero image to animate)"
+    if not topaz_finish:
+        stripped = [nid for nid, n in api.items()
+                    if n.get("class_type") == "TopazVideoAI"]
+        for nid in stripped:
+            api.pop(nid)
+        if stripped and log:
+            log(f"  [livewall] Topaz finish off — bypassed "
+                f"{len(stripped)} TopazVideoAI node(s)")
     err = _ensure_video_output(api)
     if err:
         return None, err
@@ -527,7 +539,8 @@ def generate(cfg, hero_path, dst, context, log=print, defer=True):
             log(f"  [livewall] game is running — video queued for "
                 f"{os.path.basename(hero_path)} (generated when you stop)")
         return None
-    api, err = parse_workflow(lw.get("workflow") or "", log=log)
+    api, err = parse_workflow(lw.get("workflow") or "", log=log,
+                              topaz_finish=lw.get("topaz_finish", True))
     if err:
         log(f"  [livewall] workflow problem: {err}")
         return None
@@ -682,6 +695,8 @@ def generate(cfg, hero_path, dst, context, log=print, defer=True):
     except Exception as e:
         log(f"  [livewall] error: {e}")
         return None
+    finally:
+        upscale._unload_comfy_models(cfg, base, log)
 
 
 # ---------------------------------------------------------- install + WE
