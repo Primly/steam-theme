@@ -800,6 +800,35 @@ class TestRegenerateCache(unittest.TestCase):
         for call in up.call_args_list:
             self.assertTrue(call.kwargs.get("queue_only"))
 
+    def test_cached_vlm_prompt_keys_recovered(self):
+        # run_pipeline persists the raw VLM JSON as palette._vlm; a cache
+        # pass must recover its prompt keys instead of dropping them
+        self.cfg["upscaling"] = {"enabled": True, "provider": "comfy"}
+        self.patch_main(main.theme_mod, "enumerate_monitors", lambda: [])
+        self.patch_main(main.palette_mod, "build_palette",
+                        lambda *a, **k: {"accent": "#334455",
+                                         "appearance": "dark",
+                                         "mode": "muted"})
+        with open(os.path.join(self.tmp, "440", "palette.json"), "w") as f:
+            json.dump({"game_name": "TF2", "theme_name": "Red Sand",
+                       "_vlm": {"mood": "western",
+                                "loop_prompt": "tumbleweed drift",
+                                "positive_upscale_prompt":
+                                    "crisp desert light"}}, f)
+        contexts = []
+
+        def fake_up(cfg, art, monitors, name, log, up_ctx, queue_only=False):
+            contexts.append(up_ctx)
+            return 1
+
+        self.patch_main(main, "upscale_toward_monitors", fake_up)
+        main.regenerate_cache(self.cfg, lambda m: None)
+        recovered = [c for c in contexts if c.get("loop_prompt")]
+        self.assertTrue(recovered)
+        self.assertEqual(recovered[0]["loop_prompt"], "tumbleweed drift")
+        self.assertEqual(recovered[0]["positive_upscale_prompt"],
+                         "crisp desert light")
+
     def test_topaz_upscales_are_skipped_not_run_inline(self):
         # only ComfyUI has a background queue — Topaz would block for hours
         # and spend credits, so regenerate leaves it to Ultimate Fetch

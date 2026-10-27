@@ -291,6 +291,8 @@ def run_pipeline(cfg, game, log, dry_run=False):
     pal["theme_name"] = theme_name
     pal["mood"] = mood
     pal["game_name"] = name  # per-game SignalRGB effect titles, gallery, etc.
+    if ai:
+        pal["_vlm"] = ai  # keep the raw VLM JSON so bulk passes reuse its prompts
     log(f"  [pal] {pal['appearance']} mode, accent {pal['accent']} "
         f"({pal['accent_grade']}, {pal['accent_contrast']}:1), theme '{theme_name}'")
 
@@ -487,7 +489,7 @@ def _cached_palette_ctx(cfg, art, pal, name):
     for k in ("theme_name", "mood", "appearance"):
         if pal.get(k):
             p[k] = pal[k]
-    return _upscale_context(name, p, None, cfg)
+    return _upscale_context(name, p, pal.get("_vlm"), cfg)
 
 
 def _ufetch_upscale(cfg, art, monitors, name, log, queue_only=False):
@@ -764,11 +766,16 @@ def regenerate_cache(cfg, log=print, should_cancel=lambda: False,
                 heroes = ([hero] if hero else []) + [
                     c for c in (art.get("hero_candidates") or [])
                     if isinstance(c, str) and c != hero]
+                vlm = pal.get("_vlm") or {}
                 ctx = {"game": name,
                        "theme_name": pal.get("theme_name") or "",
                        "mood": pal.get("mood") or "",
                        "appearance": pal.get("appearance") or "dark",
                        "palette_mode": pal.get("mode") or "colorful"}
+                for _k, _v in vlm.items():
+                    if _k in ctx or not isinstance(_v, (str, int, float, bool)):
+                        continue
+                    ctx[_k] = _v if isinstance(_v, str) else str(_v)
                 out = livewall.maybe_generate(
                     cfg, heroes, ctx, key,
                     pal.get("theme_name") or name, hero_dev, log,
