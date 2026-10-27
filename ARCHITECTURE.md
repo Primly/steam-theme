@@ -331,3 +331,15 @@ A systematic bug-hunt / hardening pass (committed on top of the tabbed-UI work):
 - **Bumped version** to `1.11.0`.
 
 No behavior changed; all fixes are defensive.
+
+### Follow-up changes (after the hardening pass)
+
+- **Background processing control** — the Library tab now pauses / resumes /
+  clears the deferred upscale + video drain via a `pause_background` flag in
+  `state.json` (cross-process, since the service and UI are separate
+  processes); exposed over `/api/background-status|pause|resume|clear`.
+- **Live-wallpaper default workflow** — `livewall_default_workflow.json`
+  switched from the ComfyUI graph-format save to the **Export-API** format;
+  the video prompt is now driven by the `{loop_prompt}` placeholder (the VLM
+  authors each clip's ambient motion). The live-wallpaper conversion tests
+  were reconciled to the new format.

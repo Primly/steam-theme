@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.10.3-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.11.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -285,7 +285,8 @@ the hero, so wordmarks stay crisp instead of being zoomed and cropped.
 
 ## ⚙️ Configuration
 
-`python main.py --ui` serves <http://127.0.0.1:8765> (localhost only):
+`python main.py --ui` serves <http://127.0.0.1:8765> (localhost only). The
+page is laid out as a **left sidebar with one tab per section**:
 
 | Section | What it controls |
 |---|---|
@@ -299,7 +300,8 @@ the hero, so wordmarks stay crisp instead of being zoomed and cropped.
 | **Extras** | Windows Terminal (Windows) / Konsole (Linux), SignalRGB (Windows) / OpenRGB (Linux) |
 | **Monitors** | detected displays → role mapping |
 | **Ultimate Fetch** | pre-cache artwork for the whole Steam library, with progress + cancel; optional upscaling (Topaz credits with an estimate, or free ComfyUI GPU time) |
-| **Regenerate All** | repair every cached theme: refetch missing art, run pending upscales, queue missing hero videos (background, never applies a theme) |
+| **Regenerate All** | repair every cached theme: refetch missing art, re-run VLM naming, run pending upscales, queue missing hero videos (background, never applies a theme) — pause/resume + cancel |
+| **Background processing** | pause/resume/clear the deferred upscale + video drain (jobs queue while gaming, drain when idle) |
 | **Theme gallery** | thumbnails of every cached game — themed entries re-apply instantly, art-only entries show as *not themed yet* and generate from their cached art |
 | **Activity log** | live tail of what the service is doing |
 
@@ -544,8 +546,8 @@ display:
   to the hero display; `livewall.we_monitor` overrides. On other platforms
   videos are generated and cached, just not applied.
 - **Topaz finishing defaults**: the shipped `TopazVideoAI` node runs the
-  **local** Topaz Video AI (no cloud credits): **×2 upscale** (the 2560×720
-  render lands on 5120×1440), **frame interpolation on** (`apf-2`, 24 fps ×
+  **local** Topaz Video AI (no cloud credits): **×2 upscale** (the 2560×736
+  render lands on 5120×1472), **frame interpolation on** (`apf-2`, 24 fps ×
   2.5 → 60 fps) and **`use_gpu` off** — the GPU encoder path trips the
   node's FFmpeg fallback (`Trailing option(s) found in the command`), so
   CPU-side finishing is the reliable setting. All values are plain in the
@@ -712,7 +714,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 237 tests
+python -m unittest discover -s tests -v   # 242 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -750,7 +752,7 @@ CI. Platform-specific tests skip cleanly on the other OS.
 | Live wallpaper never generates | *Defer while gaming* is on (default): it queues while you play and generates when you stop — the log names every queued job. Also check the ComfyUI host/port in the Live wallpaper section and that its workflow passes Test |
 | Video generated but Wallpaper Engine doesn't show it | WE must be running for live apply (otherwise it's queued in WE's config for its next launch); if it lands on the wrong display, set an explicit Wallpaper Engine monitor in the config UI. Videos are published into WE's own `projects/myprojects/steam-theme/` folder |
 | WE warns that a slideshow/Spotlight wallpaper will show over the live wallpaper | Steam Theme forces the Windows background mode to **Picture** on every apply (a slideshow repaints the desktop periodically and flashes over WE). If you set a slideshow yourself afterwards, the warning returns — switch Settings → Personalisation → Background back to a picture |
-| The video takes ages to generate | Cost scales with frames × pixels: a 12 s loop at 2560×720 is 289 frames of 22B video diffusion — hours on modest GPUs. In the workflow JSON, `value_2` (duration), `value_4` (height) and `value_5` (fps) are the levers; 5 s at 2560×720 is ~121 frames. Generation runs in the background (queued while gaming), so slow is fine — just let it work |
+| The video takes ages to generate | Cost scales with frames × pixels: a 12 s loop at 2560×736 is 289 frames of 22B video diffusion — hours on modest GPUs. In the workflow JSON, the Duration, height and Frame Rate primitives are the levers; 5 s is ~121 frames. Generation runs in the background (queued while gaming), so slow is fine — just let it work |
 | Linux: monitor names don't match | Use connector names (`HDMI-A-1`) — the Monitors section shows exactly what to match |
 | Linux: `xrdb: Can't open display` in logs | Harmless Wayland-session noise from KDE tools; can be ignored |
 | Linux: nothing happens in Game Mode | Theming targets the Plasma desktop session — the theme applies when you return to the desktop; detection still runs |
@@ -758,6 +760,22 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.11.0** — a hardening + UX pass:
+  - **Background processing control** (Library tab): pause/resume/clear the
+    deferred upscale + video drain while it works through the queue.
+  - **Regenerate All** now **re-runs VLM naming** so renamed art gets a fresh
+    name/mood, gained **pause/resume**, and reuses any existing upscale
+    regardless of provider (no needless re-upscales of art you've already
+    processed).
+  - **VLM JSON persisted raw** and prompt keys recovered on cache passes, so
+    custom naming-prompt keys keep flowing through as placeholders.
+  - **Config UI reorganized** into a left sidebar with one tab per section.
+  - **Live-wallpaper default workflow** rewritten to ComfyUI's Export-API
+    format, its prompt now driven by the `{loop_prompt}` placeholder.
+  - **Security & robustness sweep**: closed unclosed file handles, hardened
+    `openrgb_sync` port parsing and Windows-Terminal/backup guards, clamped
+    the poll interval, and tightened path sandboxing; added `ARCHITECTURE.md`.
+  - 242 tests (was 237); CI now also compiles `livewall.py`.
 - **1.10.3** — Live-wallpaper controls: a **Topaz-finish toggle** (off = bypass the local Topaz Video AI node and ship the raw diffusion video — no Topaz license needed), a clarified **"only the currently-displayed hero"** option, and **auto-unload of ComfyUI models from RAM/VRAM** after every generation (upscale and video, via ComfyUI's `/free` endpoint).
 - **1.10.2** — ComfyUI: include editable workflow in history so "Open as workflow in a new tab" works for every job the app queues (upscale + live-wallpaper video).
 - **1.10.1** — **the gallery shows every cached game**, not just the ones
