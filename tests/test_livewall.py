@@ -53,8 +53,8 @@ class TestGraphConversion(LiveWallFixture):
         self.assertIn("LoadImage", types)
         self.assertIn("TopazVideoAI", types)
         self.assertIn("GetVideoComponents", types)
-        # local Topaz finishing defaults: x2 upscale (2560x720 ->
-        # 5120x1440), apf-2 interpolation (24 fps x 2.5 -> 60 fps), CPU
+        # local Topaz finishing defaults: x2 upscale (2560x736 ->
+        # 5120x1472), apf-2 interpolation (24 fps x 2.5 -> 60 fps), CPU
         # side (use_gpu=true trips the node's FFmpeg encoder fallback)
         tz = [n for n in api.values() if n["class_type"] == "TopazVideoAI"][0]
         self.assertTrue(tz["inputs"]["enable_upscale"])
@@ -75,18 +75,18 @@ class TestGraphConversion(LiveWallFixture):
         api, _ = livewall.parse_workflow(livewall.default_workflow())
         prompt = [n for n in api.values()
                   if n["class_type"] == "PrimitiveStringMultiline"]
-        self.assertTrue(any("{game}" in n["inputs"].get("value", "")
+        self.assertTrue(any("{loop_prompt}" in n["inputs"].get("value", "")
                             for n in prompt))
-        # widget-only boundary inputs (not in the instance's inputs[]) still
-        # resolve BY NAME: width/height/duration/fps primitives
+        # the width/height/duration/fps primitives carry the boundary
+        # constants baked into the default LTX-2.5 workflow
         vals = {}
         for nid, n in api.items():
-            if nid.endswith(("_215", "_216", "_198", "_205")):
+            if nid.endswith((":215", ":216", ":198", ":205")):
                 vals[nid] = n["inputs"].get("value")
-        self.assertEqual(vals.get("251_215"), 2560)   # width
-        self.assertEqual(vals.get("251_216"), 720)    # height
-        self.assertEqual(vals.get("251_198"), 12)     # duration
-        self.assertEqual(vals.get("251_205"), 24)     # fps
+        self.assertEqual(vals.get("251:215"), 2560)   # width
+        self.assertEqual(vals.get("251:216"), 736)    # height
+        self.assertEqual(vals.get("251:198"), 12)     # duration
+        self.assertEqual(vals.get("251:205"), 24)     # fps
 
     def test_loadimage_loses_frontend_widgets(self):
         api, _ = livewall.parse_workflow(livewall.default_workflow())
@@ -106,9 +106,7 @@ class TestGraphConversion(LiveWallFixture):
                   "loop_prompt": "wisps of smoke drift upward"})
         self.assertEqual(dropped, [])
         blob = json.dumps(api)
-        self.assertNotIn("{game}", blob)
         self.assertNotIn("{loop_prompt}", blob)
-        self.assertIn("Quasimorph", blob)
         self.assertIn("wisps of smoke drift upward", blob)
 
     def test_loop_prompt_placeholder_drops_gracefully(self):
