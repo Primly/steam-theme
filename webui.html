@@ -8,7 +8,7 @@
   :root {
     --bg: #101014; --panel: #1a1a22; --panel2: #22222c; --border: #33333f;
     --text: #e8e8ee; --dim: #9a9aa8; --accent: #66c0f4; --ok: #4caf7d;
-    --err: #e06060; --warn: #d8a038;
+    --err: #e06060; --warn: #d8a038; --sidew: 224px;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
@@ -50,7 +50,7 @@
   #log { background: #0b0b0e; border: 1px solid var(--border); border-radius: 8px;
          padding: 12px; font: 12px/1.5 Consolas, monospace; white-space: pre-wrap;
          max-height: 260px; overflow-y: auto; color: #b8e6b8; }
-  .actions { position: fixed; bottom: 0; left: 0; right: 0; background: #14141bdd;
+  .actions { position: fixed; bottom: 0; left: var(--sidew); right: 0; background: #14141bdd;
              backdrop-filter: blur(8px); border-top: 1px solid var(--border);
              padding: 12px 28px; display: flex; gap: 12px; align-items: center; }
   #saveState { color: var(--dim); font-size: 13px; }
@@ -76,15 +76,57 @@
   .pbar > div { height: 100%; background: var(--accent); width: 0%;
                 transition: width .4s ease; }
   #ver { margin-left: auto; }
+
+  .layout { display: flex; align-items: flex-start; min-height: 100vh; }
+  .sidebar {
+    width: var(--sidew); flex: 0 0 var(--sidew);
+    position: sticky; top: 0; height: 100vh;
+    background: var(--panel); border-right: 1px solid var(--border);
+    padding: 14px 12px 24px; overflow-y: auto;
+  }
+  .sidebar .brand { font-size: 16px; font-weight: 600; padding: 2px 12px 14px; }
+  .sidebar nav { display: flex; flex-direction: column; }
+  .nav-item {
+    display: block; width: 100%; text-align: left;
+    background: transparent; border: none; border-radius: 6px;
+    color: var(--dim); padding: 8px 12px; margin: 1px 0;
+    font: inherit; cursor: pointer;
+  }
+  .nav-item:hover { background: var(--panel2); color: var(--text); }
+  .nav-item.active { background: var(--panel2); color: var(--text);
+                     box-shadow: inset 3px 0 0 var(--accent); }
+  .content { flex: 1; min-width: 0; }
+  .panel { display: none; }
+  .panel.active { display: block; }
 </style>
 </head>
 <body>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">Steam Theme</div>
+  <nav>
+    <button class="nav-item active" data-tab="overview">Overview</button>
+    <button class="nav-item" data-tab="general">General</button>
+    <button class="nav-item" data-tab="games">Non-Steam games</button>
+    <button class="nav-item" data-tab="steam">Steam</button>
+    <button class="nav-item" data-tab="artwork">Artwork sources</button>
+    <button class="nav-item" data-tab="ai">AI / VLM</button>
+    <button class="nav-item" data-tab="upscaling">Upscaling</button>
+    <button class="nav-item" data-tab="livewall">Live wallpaper</button>
+    <button class="nav-item" data-tab="extras">Extras</button>
+    <button class="nav-item" data-tab="monitors">Monitors</button>
+    <button class="nav-item" data-tab="library">Library</button>
+    <button class="nav-item" data-tab="gallery">Gallery</button>
+    <button class="nav-item" data-tab="log">Activity log</button>
+  </nav>
+</aside>
+<div class="content">
 <header>
   <h1>Steam Theme</h1><span>configuration</span><span id="ver"></span>
 </header>
 <main>
 
-<section>
+<section id="tab-overview" class="panel active">
   <h2>Current theme</h2>
   <p class="hint" id="curTheme">(loading…)</p>
   <p class="hint" id="holdNote" style="display:none"></p>
@@ -97,7 +139,7 @@
   </div>
 </section>
 
-<section>
+<section id="tab-general" class="panel">
   <h2>General</h2>
   <p class="hint">Core behavior of the theme pipeline.</p>
   <div class="row">
@@ -164,7 +206,7 @@
   </div>
 </section>
 
-<section>
+<section id="tab-games" class="panel">
   <h2>Non-Steam games</h2>
   <p class="hint">Theme games launched outside Steam (Epic, GOG, emulators) by watching for their process. One per line:
     <code>process.exe | appid (optional) | display name (optional)</code>.
@@ -175,7 +217,7 @@
   </div>
 </section>
 
-<section>
+<section id="tab-steam" class="panel">
   <h2>Steam</h2>
   <p class="hint">Free key at <a href="https://steamcommunity.com/dev/apikey" target="_blank">steamcommunity.com/dev/apikey</a>. Works on your own profile even if private.</p>
   <div class="row">
@@ -194,7 +236,7 @@
   </div>
 </section>
 
-<section>
+<section id="tab-artwork" class="panel">
   <h2>Artwork sources</h2>
   <p class="hint">SteamGridDB gives proper heroes/logos/icons. Free key at <a href="https://www.steamgriddb.com/profile/preferences/api" target="_blank">steamgriddb.com/profile/preferences/api</a>. Steam CDN + wallhaven are keyless fallbacks.</p>
   <div class="row">
@@ -211,7 +253,7 @@
   </div>
 </section>
 
-<section>
+<section id="tab-ai" class="panel">
   <h2>AI / VLM (OpenAI-compatible)</h2>
   <p class="hint">Used for theme naming + mood classification (and upscaling, if selected below). Point at a local server (LM Studio, Ollama) or a cloud provider like OpenRouter.</p>
   <div class="row">
@@ -259,7 +301,7 @@
   </div>
 </section>
 
-<section>
+<section id="tab-upscaling" class="panel">
   <h2>Upscaling</h2>
   <p class="hint">When artwork is smaller than its target monitor, upscale it. Topaz Gigapixel (cloud, per-image credits), a local ComfyUI workflow (your GPU, free), or any OpenAI-compatible images endpoint.</p>
   <div class="row">
@@ -380,7 +422,7 @@
   </div>
 </section>
 
-<section>
+<section id="tab-livewall" class="panel">
   <h2>Live wallpaper</h2>
   <p class="hint">Generate a short looping video from the hero art (ComfyUI) and set it as an
     animated Wallpaper Engine background on the hero display. One video per theme, cached —
@@ -451,7 +493,7 @@
   </div>
 </section>
 
-<section>
+<section id="tab-extras" class="panel">
   <h2>Extras</h2>
   <p class="hint">Extend the theme beyond the desktop.</p>
   <div id="wtBlock">
@@ -512,14 +554,14 @@
   </div>
 </section>
 
-<section>
+<section id="tab-monitors" class="panel">
   <h2>Monitors</h2>
   <p class="hint" id="monHint">Match is a case-insensitive substring of the display name. Roles: hero / logo / icon.
     <button onclick="loadMonitors()">Refresh detected displays</button></p>
   <table id="monTable"></table>
 </section>
 
-<section>
+<section id="tab-library" class="panel">
   <h2>Ultimate Fetch</h2>
   <p class="hint">Pre-cache artwork for your <b>entire Steam library</b> — every game's hero
     candidates, logo and icon — so themes apply instantly when you play something new.
@@ -556,7 +598,7 @@
   <div class="pbar" id="regenBar" style="display:none"><div id="regenFill"></div></div>
 </section>
 
-<section>
+<section id="tab-gallery" class="panel">
   <h2>Theme gallery</h2>
   <p class="hint">Every game in the local cache — themed entries re-apply instantly (no API calls,
     no Topaz credits); entries marked <i>not themed yet</i> have their artwork cached but were never
@@ -565,12 +607,14 @@
   <div id="gallery"></div>
 </section>
 
-<section>
+<section id="tab-log" class="panel">
   <h2>Activity log</h2>
   <div id="log">(loading…)</div>
 </section>
 
 </main>
+</div>
+</div>
 
 <div class="actions">
   <button class="primary" onclick="save()">Save</button>
@@ -1245,6 +1289,17 @@ async function refreshLog() {
   el.textContent = r.log || "(empty)";
   if (atBottom) el.scrollTop = el.scrollHeight;
 }
+
+// ---- sidebar tabs
+function switchTab(name) {
+  document.querySelectorAll(".nav-item").forEach(b =>
+    b.classList.toggle("active", b.dataset.tab === name));
+  document.querySelectorAll(".panel").forEach(p =>
+    p.classList.toggle("active", p.id === "tab-" + name));
+  window.scrollTo({ top: 0 });
+}
+document.querySelectorAll(".nav-item").forEach(b =>
+  b.addEventListener("click", () => switchTab(b.dataset.tab)));
 
 load();
 </script>
