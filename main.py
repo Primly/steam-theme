@@ -179,6 +179,11 @@ def upscale_toward_monitors(cfg, art, monitors, name, log, up_ctx,
         if queue_only:
             if os.path.exists(dst):
                 return dst
+            # a different provider/model may already have upscaled this
+            # source — reuse it instead of queueing redundant work
+            existing = upscale.find_existing_upscale(path)
+            if existing:
+                return existing
             # only the ComfyUI provider has a background queue; Topaz/AI
             # runs inline and would block a bulk pass for hours
             if cfg.get("upscaling", {}).get("provider") != "comfy":
@@ -665,7 +670,8 @@ def fetch_library(cfg, log=print, should_cancel=lambda: False,
 
 
 def regenerate_cache(cfg, log=print, should_cancel=lambda: False,
-                     progress=None, with_videos=True):
+                     should_pause=lambda: False, progress=None,
+                     with_videos=True):
     """Regenerate All: walk every theme already in the cache and fill in
     what's missing — art (gaps refetched), upscales (images with no cached
     result), and live-wallpaper videos (heroes with no clip). Never applies
@@ -711,6 +717,8 @@ def regenerate_cache(cfg, log=print, should_cancel=lambda: False,
     log(f"regenerate all: {len(entries)} cached theme(s) — upscaling "
         f"{'on' if up else 'off'}, videos {'on' if with_videos else 'off'}")
     for i, key in enumerate(entries):
+        while should_pause() and not should_cancel():
+            time.sleep(0.2)
         if should_cancel():
             stats["cancelled"] = True
             log(f"  [regen] cancelled after {i} theme(s)")
@@ -750,6 +758,41 @@ def regenerate_cache(cfg, log=print, should_cancel=lambda: False,
             except Exception as e:
                 stats["failed"] += 1
                 log(f"  [regen] {name}: fetch failed: {e}")
+        # cached themes that predate the _vlm persistence carry no AI
+        # description/mood/prompt keys — (re)run VLM naming once so the
+        # deferred upscale/video jobs get real prompt context. Skipped when
+        # the VLM is unconfigured (ai_theme_naming self-gates) or when this
+        # theme already has a stored _vlm.
+        if art and not pal.get("_vlm") and (up or with_videos):
+            try:
+                hero = art.get("hero") or next(iter(art.values()))
+                naming_pal = pal
+                if "colors" not in pal:
+                    pref = cfg.get("appearance_preference")
+                    if pref not in ("dark", "light", "auto"):
+                        pref = "dark" if cfg.get("force_dark_mode") else "auto"
+                    naming_pal = palette_mod.build_palette(
+                        hero, pal.get("mode")
+                        or cfg.get("palette_mode", "colorful"),
+                        force=None if pref == "auto" else pref)
+                ai = palette_mod.ai_theme_naming(cfg, hero, naming_pal, name,
+                                                 log)
+                if ai:
+                    pal["_vlm"] = ai
+                    if ai.get("theme_name"):
+                        pal["theme_name"] = ai["theme_name"]
+                    if ai.get("mood"):
+                        pal["mood"] = ai["mood"]
+                    log(f"  [regen] {name}: VLM re-named as "
+                        f"'{pal.get('theme_name')}'")
+                    try:
+                        with open(os.path.join(cache, "palette.json"),
+                                  "w", encoding="utf-8") as f:
+                            json.dump(pal, f, indent=2)
+                    except OSError:
+                        pass
+            except Exception as e:
+                log(f"  [regen] {name}: VLM naming failed: {e}")
         if art and up:
             try:
                 ctx = _cached_palette_ctx(cfg, art, pal, name)

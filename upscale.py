@@ -11,6 +11,7 @@ When fetched art is smaller than the monitor it will fill, upscale it:
 Results are cached next to the source as <role>_upscaled_<model>.png.
 """
 
+import glob
 import hashlib
 import json
 import os
@@ -85,14 +86,26 @@ def cache_path(src, cfg, role=None):
     return os.path.splitext(src)[0] + f"_upscaled_{_slug(model)}.png"
 
 
+def find_existing_upscale(src):
+    """Any existing upscaled variant of src, regardless of the provider/model
+    that produced it. All upscale caches share the <base>_upscaled_<model>.png
+    filename, so when a provider changes (say Topaz -> Comfy) an older
+    provider's result still counts as 'already upscaled' — no need to redo it.
+    Returns the path if one exists, else None."""
+    base = os.path.splitext(src)[0]
+    matches = glob.glob(base + "_upscaled_*.png")
+    return matches[0] if matches else None
+
+
 def pending(src, target_w, target_h, cfg, role=None):
     """True if an upscale pass would actually submit a job for src: it needs
-    enlargement toward the target AND has no cached result yet. Never spends
-    anything — used for Ultimate Fetch's pre-flight credit estimate."""
+    enlargement toward the target AND has no cached result yet (any provider).
+    Never spends anything — used for Ultimate Fetch's pre-flight credit
+    estimate."""
     if not cfg.get("upscaling", {}).get("enabled"):
         return False
     needed, _ = _needs_upscale(src, target_w, target_h)
-    return needed and not os.path.exists(cache_path(src, cfg, role))
+    return needed and find_existing_upscale(src) is None
 
 
 def _topaz(src, dst, cfg, log, target_w, target_h, context=None, role=None,
@@ -832,6 +845,13 @@ def maybe_upscale(path, target_w, target_h, cfg, log=print, context=None,
     dst = cache_path(path, cfg, role)
     if os.path.exists(dst):
         return dst  # one upscale per source+model; never re-spend credits
+    existing = find_existing_upscale(path)
+    if existing:
+        # a different provider/model already produced an upscale for this
+        # source — reuse it rather than spending credits/GPU time again
+        log(f"  [up] {os.path.basename(path)} already has an upsize "
+            f"({os.path.basename(existing)}) — reusing it")
+        return existing
     log(f"  [up] {os.path.basename(path)} is {w}x{h}, target {target_w}x{target_h}, "
         f"model '{model}' — upscaling")
     if prov == "topaz":

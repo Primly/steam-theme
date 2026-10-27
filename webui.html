@@ -550,6 +550,7 @@
   <div class="row">
     <button id="regenBtn" onclick="startRegen()">Regenerate All</button>
     <button id="regenCancel" onclick="cancelRegen()" style="display:none">Cancel</button>
+    <button id="regenPause" onclick="toggleRegenPause()" style="display:none">Pause</button>
     <span class="hint" id="regenStatus" style="margin:0"></span>
   </div>
   <div class="pbar" id="regenBar" style="display:none"><div id="regenFill"></div></div>
@@ -1140,19 +1141,36 @@ async function cancelRegen() {
   document.getElementById("regenStatus").textContent = r.detail || r.error || "";
 }
 
+async function toggleRegenPause() {
+  const s = await api("/api/regenerate-all-status");
+  const r = s.paused
+    ? await api("/api/regenerate-all-resume", {})
+    : await api("/api/regenerate-all-pause", {});
+  await pollRegen();
+}
+
 function renderRegen(s) {
   const bar = document.getElementById("regenBar");
   const fill = document.getElementById("regenFill");
   const st = document.getElementById("regenStatus");
   document.getElementById("regenBtn").style.display = s.running ? "none" : "";
   document.getElementById("regenCancel").style.display = s.running ? "" : "none";
+  const pauseBtn = document.getElementById("regenPause");
+  pauseBtn.style.display = s.running ? "" : "none";
+  pauseBtn.textContent = s.paused ? "Resume" : "Pause";
   if (s.running) {
     bar.style.display = "";
     const pct = s.total ? Math.round(100 * s.done / s.total) : 0;
     fill.style.width = pct + "%";
-    st.textContent = s.total
-      ? `${s.done} / ${s.total} (${pct}%) — ${s.current}`
-      : "scanning the cache…";
+    if (s.paused) {
+      st.textContent = s.total
+        ? `paused — ${s.done} / ${s.total} — ${s.current}`
+        : "paused — scanning the cache…";
+    } else {
+      st.textContent = s.total
+        ? `${s.done} / ${s.total} (${pct}%) — ${s.current}`
+        : "scanning the cache…";
+    }
   } else if (s.stats || s.error) {
     bar.style.display = "none";
     if (s.error) { st.textContent = "failed: " + s.error; return; }

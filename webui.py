@@ -28,6 +28,8 @@ API:
   POST /api/regenerate-all      {videos}  repair every cached theme
   GET  /api/regenerate-all-status        Regenerate All progress
   POST /api/regenerate-all-cancel        cancel a running Regenerate All
+  POST /api/regenerate-all-pause         pause a running Regenerate All
+  POST /api/regenerate-all-resume        resume a paused Regenerate All
 """
 
 import json
@@ -285,8 +287,8 @@ FETCH_ALL = {"running": False, "done": 0, "total": 0, "current": "",
 
 # Regenerate All (cached themes: refetch gaps, upscales, hero videos)
 REGEN = {"running": False, "done": 0, "total": 0, "current": "",
-         "cancel_requested": False, "stats": None, "error": None,
-         "videos": True}
+         "cancel_requested": False, "paused": False, "stats": None,
+         "error": None, "videos": True}
 
 
 _NAMES = {"at": 0.0, "map": {}}
@@ -673,8 +675,8 @@ class Handler(BaseHTTPRequestHandler):
             cfg = app.load_config()
             with_videos = bool(body.get("videos", True))
             REGEN.update(running=True, done=0, total=0, current="",
-                         cancel_requested=False, stats=None, error=None,
-                         videos=with_videos)
+                         cancel_requested=False, paused=False, stats=None,
+                         error=None, videos=with_videos)
 
             def work():
                 log = app._log_factory(cfg)
@@ -682,6 +684,7 @@ class Handler(BaseHTTPRequestHandler):
                     stats = app.regenerate_cache(
                         cfg, log, with_videos=with_videos,
                         should_cancel=lambda: REGEN["cancel_requested"],
+                        should_pause=lambda: REGEN["paused"],
                         progress=lambda i, total, name: REGEN.update(
                             done=i, total=total, current=name))
                     REGEN["stats"] = stats
@@ -703,9 +706,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": False, "error": "nothing is running"})
                 return
             REGEN["cancel_requested"] = True
+            REGEN["paused"] = False
             self._send(200, {"ok": True,
                              "detail": "cancelling after the current "
                                        "theme…"})
+        elif path == "/api/regenerate-all-pause":
+            if not REGEN["running"]:
+                self._send(200, {"ok": False, "error": "nothing is running"})
+                return
+            REGEN["paused"] = True
+            self._send(200, {"ok": True,
+                             "detail": "pausing after the current theme…"})
+        elif path == "/api/regenerate-all-resume":
+            if not REGEN["running"]:
+                self._send(200, {"ok": False, "error": "nothing is running"})
+                return
+            REGEN["paused"] = False
+            self._send(200, {"ok": True, "detail": "resumed"})
         elif path == "/api/fetch-all":
             if FETCH_ALL["running"]:
                 self._send(409, {"ok": False,

@@ -875,6 +875,75 @@ class TestRegenerateCache(unittest.TestCase):
             should_cancel=lambda: len(seen) >= 1)
         self.assertTrue(stats["cancelled"])
 
+    def test_pause_blocks_then_resumes(self):
+        # should_pause returning True once makes the loop busy-wait, then it
+        # proceeds normally; the run still completes.
+        calls = {"n": 0}
+
+        def should_pause():
+            calls["n"] += 1
+            return calls["n"] == 1
+
+        stats = main.regenerate_cache(self.cfg, lambda m: None,
+                                      should_pause=should_pause)
+        self.assertGreaterEqual(calls["n"], 1)
+        self.assertFalse(stats["cancelled"])
+
+    def test_vlm_renamed_when_palette_lacks_vlm(self):
+        # a cached theme predating _vlm persistence has no prompt keys — the
+        # pass re-runs VLM naming once and flows the result into the upscale
+        # context handed to the (deferred) upscale pass.
+        self.cfg["upscaling"] = {"enabled": True, "provider": "comfy"}
+        self.patch_main(main.theme_mod, "enumerate_monitors", lambda: [])
+        self.patch_main(main.palette_mod, "build_palette",
+                        lambda *a, **k: {"accent": "#334455",
+                                         "appearance": "dark",
+                                         "mode": "muted"})
+        vlm_result = {"mood": "grungy", "loop_prompt": "rust drift",
+                      "positive_upscale_prompt": "gritty detail"}
+        self.patch_main(main.palette_mod, "ai_theme_naming",
+                        lambda *a, **k: vlm_result)
+        contexts = []
+
+        def fake_up(cfg, art, monitors, name, log, up_ctx, queue_only=False):
+            contexts.append(up_ctx)
+            return 1
+
+        self.patch_main(main, "upscale_toward_monitors", fake_up)
+        main.regenerate_cache(self.cfg, lambda m: None)
+        recovered = [c for c in contexts if c.get("loop_prompt")]
+        self.assertTrue(recovered)
+        self.assertEqual(recovered[0]["loop_prompt"], "rust drift")
+
+    def test_queue_only_reuses_other_provider_upscale(self):
+        # a Topaz upscale of hero_1.jpg already exists; the provider is now
+        # Comfy — the bulk pass must reuse the existing result rather than
+        # queueing redundant work.
+        c = os.path.join(self.tmp, "440")
+        existing = os.path.join(c, "hero_1_upscaled_bloom-2.png")
+        with open(existing, "wb") as f:
+            f.write(b"x")
+        self.cfg["upscaling"] = {"enabled": True, "provider": "comfy"}
+        art = {"hero": os.path.join(c, "hero_1.jpg"),
+               "hero_candidates": [os.path.join(c, "hero_1.jpg")],
+               "logo": os.path.join(c, "logo.jpg"),
+               "icon": os.path.join(c, "icon.png")}
+        mons = [{"role": "hero", "rect": (0, 0, 5120, 1440)}]
+        with mock.patch.object(main.upscale, "queue_upscale") as q:
+            main.upscale_toward_monitors(
+                self.cfg, art, mons, "TF2", lambda m: None, {},
+                queue_only=True)
+        q.assert_not_called()
+
+    def test_find_existing_upscale_matches_any_provider(self):
+        src = os.path.join(self.tmp, "440", "hero_1.jpg")
+        bloom = src.replace(".jpg", "_upscaled_bloom-2.png")
+        with open(bloom, "wb") as f:
+            f.write(b"x")
+        self.assertEqual(upscale.find_existing_upscale(src), bloom)
+        self.assertIsNone(upscale.find_existing_upscale(
+            os.path.join(self.tmp, "440", "logo.jpg")))
+
     def test_fetch_failure_is_counted(self):
         self.patch_main(main.artwork, "fetch_artwork",
                         lambda *a, **k: None)
