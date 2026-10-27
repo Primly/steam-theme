@@ -153,10 +153,11 @@ def _topaz(src, dst, cfg, log, target_w, target_h, context=None, role=None,
             f"prompt: {data.get('prompt', '<autoprompt>')[:80]})")
 
     headers = {"X-API-Key": key}
-    r = requests.post(
-        TOPAZ_BASE + ("/enhance-gen/async" if generative else "/enhance/async"),
-        headers=headers, timeout=60, data=data,
-        files={"image": open(src, "rb")})
+    with open(src, "rb") as img_f:
+        r = requests.post(
+            TOPAZ_BASE + ("/enhance-gen/async" if generative else "/enhance/async"),
+            headers=headers, timeout=60, data=data,
+            files={"image": img_f})
     if r.status_code not in (200, 201, 202):
         log(f"  [up] topaz submit failed: HTTP {r.status_code} {r.text[:200]}")
         return None
@@ -208,12 +209,13 @@ def _ai(src, dst, cfg, log, timeout_s=300):
     headers = {"Authorization": f"Bearer {ai.get('api_key') or 'none'}"}
     model = ai.get("upscale_model") or ai.get("model") or ""
     try:
-        r = requests.post(
-            base + "/images/edits", headers=headers, timeout=timeout_s,
-            data={"model": model, "response_format": "b64_json",
-                  "prompt": "Upscale this game key art to higher resolution, "
-                            "faithful, no content changes."},
-            files={"image": open(src, "rb")})
+        with open(src, "rb") as img_f:
+            r = requests.post(
+                base + "/images/edits", headers=headers, timeout=timeout_s,
+                data={"model": model, "response_format": "b64_json",
+                      "prompt": "Upscale this game key art to higher "
+                                "resolution, faithful, no content changes."},
+                files={"image": img_f})
         if r.status_code != 200:
             log(f"  [up] ai images API failed: HTTP {r.status_code} {r.text[:200]}")
             return None

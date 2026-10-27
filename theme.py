@@ -128,6 +128,10 @@ def snapshot_windows_look(log=print):
 def restore_windows_look(log=print):
     """Write the snapshot back: registry colors/modes + original wallpaper."""
     import json
+    if not os.path.exists(_BACKUP_PATH):
+        log("  [restore] no snapshot found (windows_backup.json missing — "
+            "nothing was ever applied)")
+        return
     with open(_BACKUP_PATH, encoding="utf-8") as f:
         snap = json.load(f)
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER,

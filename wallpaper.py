@@ -79,16 +79,17 @@ def compose_monitor_tile(monitor, art, hero, w, h, log=print):
     proportioned, or small) get centered on a blurred hero backdrop.
     """
     src = art.get(monitor["role"]) or hero
-    img = Image.open(src)
-    iw, ih = img.size
-    covers = (iw >= w * 0.6 and ih >= h * 0.6
-              and abs((iw / ih) / (w / h) - 1) < 0.35)
-    centered = (monitor["role"] in ("logo", "icon") and src != hero
-                and (_has_transparency(img) or not covers))
-    if centered:
-        log(f"  [wall] {monitor['role']} art is transparent/small -> centered treatment")
-        return _centered_on_backdrop(img, Image.open(hero).convert("RGB"), w, h)
-    return _cover(img.convert("RGB"), w, h)
+    with Image.open(src) as img:
+        iw, ih = img.size
+        covers = (iw >= w * 0.6 and ih >= h * 0.6
+                  and abs((iw / ih) / (w / h) - 1) < 0.35)
+        centered = (monitor["role"] in ("logo", "icon") and src != hero
+                    and (_has_transparency(img) or not covers))
+        if centered:
+            log(f"  [wall] {monitor['role']} art is transparent/small -> centered treatment")
+            with Image.open(hero) as himg:
+                return _centered_on_backdrop(img, himg.convert("RGB"), w, h)
+        return _cover(img.convert("RGB"), w, h)
 
 
 def _prune_old_composites(cache_dir, keep_paths):
@@ -126,7 +127,8 @@ def compose_wallpaper(monitors, art, out_path, log=print, prune=True):
     W, H = max_x - min_x, max_y - min_y
 
     hero = first_art_path(art)
-    canvas = _cover(Image.open(hero).convert("RGB"), W, H)  # fills any gaps
+    with Image.open(hero) as himg:
+        canvas = _cover(himg.convert("RGB"), W, H)  # fills any gaps
 
     for m in monitors:
         l, t, r, b = m["rect"]

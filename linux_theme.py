@@ -362,6 +362,10 @@ def snapshot_windows_look(log=print):
 
 def restore_windows_look(log=print):
     """Write the snapshot back: color scheme/accent + per-screen wallpapers."""
+    if not os.path.exists(_BACKUP_PATH):
+        log("  [restore] no snapshot found (desktop_backup.json missing — "
+            "nothing was ever applied)")
+        return
     with open(_BACKUP_PATH, encoding="utf-8") as f:
         snap = json.load(f)
     scheme = snap.get("color_scheme") or "BreezeLight"

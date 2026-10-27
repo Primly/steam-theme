@@ -46,7 +46,10 @@ def apply_openrgb(cfg, palette, log=print):
         return
 
     host = ocfg.get("host", "127.0.0.1")
-    port = int(ocfg.get("port", 6742))
+    try:
+        port = int(ocfg.get("port", 6742))
+    except (TypeError, ValueError):
+        port = 6742
     try:
         client = OpenRGBClient(host, port, name="Steam Theme")
     except Exception as e:

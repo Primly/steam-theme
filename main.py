@@ -36,7 +36,7 @@ else:
     import linux_theme as theme_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-__version__ = "1.10.3"
+__version__ = "1.11.0"
 
 
 def safe_join(base, *parts):
@@ -1036,7 +1036,13 @@ def main():
     log("service started (Ctrl+C to stop); config reloads every cycle")
     while True:
         cfg = load_config()  # live-reload so the web UI applies without restart
-        interval = cfg.get("poll_interval_seconds", 30)
+        # a hand-edited config could hold a non-numeric or absurd interval;
+        # clamp it so a bad value can never crash or starve the poll loop
+        try:
+            interval = float(cfg.get("poll_interval_seconds", 30))
+        except (TypeError, ValueError):
+            interval = 30.0
+        interval = max(5.0, min(interval, 24 * 3600))
         try:
             # deferred Comfy upscales drain once the GPU is free; if they
             # belong to the theme on screen right now, re-apply it so the

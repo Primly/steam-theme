@@ -22,6 +22,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Compile check
-        run: python -m py_compile main.py webui.py theme.py linux_theme.py wallpaper.py extras.py artwork.py upscale.py palette.py steamdetect.py srgb_effects.py openrgb_sync.py
+        run: python -m py_compile main.py webui.py theme.py linux_theme.py wallpaper.py extras.py artwork.py upscale.py palette.py steamdetect.py srgb_effects.py openrgb_sync.py livewall.py
       - name: Unit tests
         run: python -m unittest discover -s tests -v
