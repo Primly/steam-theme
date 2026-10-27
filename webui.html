@@ -596,6 +596,16 @@
     <span class="hint" id="regenStatus" style="margin:0"></span>
   </div>
   <div class="pbar" id="regenBar" style="display:none"><div id="regenFill"></div></div>
+  <div class="sub">Background processing</div>
+  <p class="hint">Deferred upscale and live-wallpaper jobs drain in the background (a few at a
+    time) whenever your GPU is idle and no game is running. Pause holds the queue in place — jobs
+    stay queued and resume later. “Clear queue” discards all pending jobs (any results already
+    written to disk are kept).</p>
+  <div class="row">
+    <button id="bgPause" onclick="toggleBackground()">Pause</button>
+    <button id="bgClear" onclick="clearBackground()">Clear queue</button>
+    <span class="hint" id="bgStatus" style="margin:0"></span>
+  </div>
 </section>
 
 <section id="tab-gallery" class="panel">
@@ -880,7 +890,9 @@ async function load() {
   if (fa.running) pollUFetch(); else renderUFetch(fa);
   const rg = await api("/api/regenerate-all-status");
   if (rg.running) pollRegen(); else renderRegen(rg);
+  bgStatus();
   setInterval(refreshLog, 5000);
+  setInterval(bgStatus, 5000);
 }
 
 async function save(apply) {
@@ -1238,6 +1250,37 @@ async function pollRegen() {
   };
   await tick();
   regenTimer = setInterval(tick, 2000);
+}
+
+async function bgStatus() {
+  const s = await api("/api/background-status");
+  const st = document.getElementById("bgStatus");
+  const b = document.getElementById("bgPause");
+  if (!s.ok) { st.textContent = s.error || "unavailable"; return; }
+  b.textContent = s.paused ? "Resume" : "Pause";
+  st.textContent = s.paused
+    ? `paused — ${s.upscales} upscale(s), ${s.videos} video(s) queued`
+    : `${s.upscales} upscale(s), ${s.videos} video(s) queued`;
+}
+
+async function toggleBackground() {
+  const s = await api("/api/background-status");
+  await (s.paused
+    ? api("/api/background-resume", {})
+    : api("/api/background-pause", {}));
+  await bgStatus();
+  refreshLog();
+}
+
+async function clearBackground() {
+  if (!confirm(
+      "Clear the background queue?\n\nThis discards all pending upscale and " +
+      "live-wallpaper jobs. Any results already written to disk are kept, and " +
+      "you can re-queue them later with Regenerate All.\n\nContinue?"))
+    return;
+  await api("/api/background-clear", {});
+  await bgStatus();
+  refreshLog();
 }
 
 async function cancelUFetch() {

@@ -30,6 +30,10 @@ API:
   POST /api/regenerate-all-cancel        cancel a running Regenerate All
   POST /api/regenerate-all-pause         pause a running Regenerate All
   POST /api/regenerate-all-resume        resume a paused Regenerate All
+  GET  /api/background-status            deferred upscale/video drain status
+  POST /api/background-pause             pause the background drain (state.json)
+  POST /api/background-resume            resume the background drain
+  POST /api/background-clear             discard queued upscale/video jobs
 """
 
 import json
@@ -494,6 +498,26 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, dict(FETCH_ALL))
         elif path == "/api/regenerate-all-status":
             self._send(200, dict(REGEN))
+        elif path == "/api/background-status":
+            import main as app
+            import upscale as _up
+            cfg = app.load_config()
+            state = app.load_state(cfg)
+            up_q = vq = 0
+            try:
+                q = json.load(open(_up._queue_file(cfg), encoding="utf-8"))
+                up_q = len(q) if isinstance(q, list) else 0
+            except (OSError, json.JSONDecodeError):
+                pass
+            try:
+                import livewall as _lw
+                q = json.load(open(_lw._queue_file(cfg), encoding="utf-8"))
+                vq = len(q) if isinstance(q, list) else 0
+            except (OSError, json.JSONDecodeError):
+                pass
+            self._send(200, {"ok": True,
+                             "paused": bool(state.get("pause_background")),
+                             "upscales": up_q, "videos": vq})
         elif path == "/api/comfy-default-workflow":
             import upscale as _up
             self._send(200, {"ok": True, "workflow": _up.DEFAULT_COMFY_WORKFLOW})
@@ -852,6 +876,52 @@ class Handler(BaseHTTPRequestHandler):
                     log(f"run-now error: {e}")
             threading.Thread(target=work, daemon=True).start()
             self._send(200, {"ok": True, "detail": "pipeline started; watch the log below"})
+        elif path == "/api/background-pause":
+            import main as app
+            cfg = app.load_config()
+            state = app.load_state(cfg)
+            state["pause_background"] = True
+            app.save_state(cfg, state)
+            self._send(200, {"ok": True,
+                             "detail": "background processing paused"})
+        elif path == "/api/background-resume":
+            import main as app
+            cfg = app.load_config()
+            state = app.load_state(cfg)
+            state.pop("pause_background", None)
+            app.save_state(cfg, state)
+            self._send(200, {"ok": True,
+                             "detail": "background processing resumed"})
+        elif path == "/api/background-clear":
+            import main as app
+            import upscale as _up
+            cfg = app.load_config()
+            n = vn = 0
+            try:
+                q = json.load(open(_up._queue_file(cfg), encoding="utf-8"))
+                n = len(q) if isinstance(q, list) else 0
+            except (OSError, json.JSONDecodeError):
+                n = 0
+            try:
+                with open(_up._queue_file(cfg), "w", encoding="utf-8") as f:
+                    json.dump([], f)
+            except OSError:
+                pass
+            try:
+                import livewall as _lw
+                q = json.load(open(_lw._queue_file(cfg), encoding="utf-8"))
+                vn = len(q) if isinstance(q, list) else 0
+            except (OSError, json.JSONDecodeError):
+                vn = 0
+            try:
+                with open(_lw._queue_file(cfg), "w", encoding="utf-8") as f:
+                    json.dump([], f)
+            except OSError:
+                pass
+            self._send(200, {"ok": True,
+                             "detail": f"cleared {n} upscale(s) and "
+                                       f"{vn} video(s) from the background "
+                                       "queue"})
         else:
             self._send(404, {"error": "not found"})
 

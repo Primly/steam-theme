@@ -193,6 +193,11 @@ forced.
   Extras, Monitors, Library, Gallery, Activity log).
 - All endpoints are under `/api/…`. Long jobs run in daemon threads; progress
   polls `/api/…-status`.
+- The **Library** tab also has a *Background processing* control that pauses/
+  resumes/clears the deferred upscale + video drain. Because the service (`main.py`)
+  and the config UI (`webui.py`) are **separate processes**, this signal travels
+  through `state.json` (`state["pause_background"]`) — the same cross-process
+  channel already used by `manual_hold`.
 
 ---
 

@@ -1044,11 +1044,15 @@ def main():
             interval = 30.0
         interval = max(5.0, min(interval, 24 * 3600))
         try:
+            st = load_state(cfg)
+            # the config UI (a separate process) can set pause_background in
+            # state.json to hold the deferred upscale/video drains right here
+            paused = bool(st.get("pause_background"))
             # deferred Comfy upscales drain once the GPU is free; if they
             # belong to the theme on screen right now, re-apply it so the
             # crisp art replaces the fallback originals
-            done = upscale.drain_comfy_queue(cfg, log, max_jobs=3)
-            st = load_state(cfg)
+            done = ([] if paused
+                    else upscale.drain_comfy_queue(cfg, log, max_jobs=3))
             hold = st.get("manual_hold")
             current = (str(hold.get("identity"))
                        if isinstance(hold, dict) and hold.get("identity")
@@ -1061,7 +1065,8 @@ def main():
                 continue
             # live-wallpaper renders run in a background worker (a clip can
             # take an hour) so this poller stays responsive
-            livewall.start_drain(cfg, log)
+            if not paused:
+                livewall.start_drain(cfg, log)
             _livewall_rotation_tick(cfg, log)
             check_once(cfg, log)
         except Exception as e:
