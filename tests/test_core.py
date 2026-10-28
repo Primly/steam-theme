@@ -817,7 +817,8 @@ class TestRegenerateCache(unittest.TestCase):
                                     "crisp desert light"}}, f)
         contexts = []
 
-        def fake_up(cfg, art, monitors, name, log, up_ctx, queue_only=False):
+        def fake_up(cfg, art, monitors, name, log, up_ctx, queue_only=False,
+                    ctx_for=None):
             contexts.append(up_ctx)
             return 1
 
@@ -844,7 +845,8 @@ class TestRegenerateCache(unittest.TestCase):
     def test_videos_queue_for_heroes_without_clips(self):
         self.cfg["livewall"] = {"enabled": True, "provider": "comfy"}
 
-        def fake_gen(cfg, heroes, ctx, key, title, dev, log, apply=True):
+        def fake_gen(cfg, heroes, ctx, key, title, dev, log, apply=True,
+                     ctx_for=None):
             self.video_calls.append((key, len(heroes), ctx.get("game")))
             return {"heroes": len(heroes), "cached": 0,
                     "queued": len(heroes), "applied": False}
@@ -905,7 +907,8 @@ class TestRegenerateCache(unittest.TestCase):
                         lambda *a, **k: vlm_result)
         contexts = []
 
-        def fake_up(cfg, art, monitors, name, log, up_ctx, queue_only=False):
+        def fake_up(cfg, art, monitors, name, log, up_ctx, queue_only=False,
+                    ctx_for=None):
             contexts.append(up_ctx)
             return 1
 
@@ -1320,7 +1323,7 @@ class TestUpscaleContext(unittest.TestCase):
     def test_fixed_five_present_without_ai(self):
         ctx = self._ctx(None)
         self.assertEqual(ctx, {"game": "Hades II", "mood": "",
-                               "theme_name": "Hades II — Steam Theme",
+                               "theme_name": "Hades II",
                                "appearance": "dark",
                                "palette_mode": "colorful"})
 
@@ -1348,7 +1351,8 @@ class TestUpscaleContext(unittest.TestCase):
         self.assertEqual(ctx["appearance"], "dark")     # pal's effective value
         self.assertEqual(ctx["palette_mode"], "muted")  # ai beats cfg default
         self.assertEqual(ctx["game"], "Hades II")       # never spoofable
-        self.assertEqual(ctx["theme_name"], "Ashen Vigil")
+        # themes are named after the game — a VLM name is never used
+        self.assertEqual(ctx["theme_name"], "Hades II")
 
     def test_unplaceholdable_values_and_keys_skipped(self):
         ai = {"nested": {"x": 1}, "nothing": None, "bool_list": [True],
@@ -1361,6 +1365,148 @@ class TestUpscaleContext(unittest.TestCase):
     def test_runaway_value_capped(self):
         ctx = self._ctx({"essay": "x" * 5000})
         self.assertEqual(len(ctx["essay"]), 200)
+
+
+class TestThemeNamingAndPerImagePrompts(unittest.TestCase):
+    """Themes are named after the game (a VLM theme_name only ever described
+    the hero it was shown), and every image gets its own VLM description for
+    upscale / video prompts instead of reusing the hero's."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(dir=main.BASE_DIR)
+        self.addCleanup(lambda: __import__("shutil").rmtree(
+            self.tmp, ignore_errors=True))
+        from PIL import Image
+        self.img = {}
+        for n in ("hero_1", "hero_2", "logo", "icon"):
+            p = os.path.join(self.tmp, n + ".png")
+            Image.new("RGB", (16, 16), (20, 40, 60)).save(p)
+            self.img[n] = p
+
+    def _cfg(self, per_image=True, enabled=True):
+        return {"cache_dir": self.tmp,
+                "ai": {"enabled": enabled, "base_url": "http://x",
+                       "model": "m",
+                       "use_for": {"theme_naming": True,
+                                   "per_image_prompts": per_image}}}
+
+    def test_theme_name_is_the_game_name(self):
+        pal = {"appearance": "dark", "theme_name": "The Witcher 3"}
+        ctx = main._upscale_context("The Witcher 3", pal,
+                                    {"theme_name": "Ashen Vigil"}, {})
+        self.assertEqual(ctx["theme_name"], "The Witcher 3")
+
+    def test_each_image_gets_its_own_description(self):
+        cfg = self._cfg()
+        pal = {"appearance": "dark", "theme_name": "TF2"}
+        replies = iter([{"mood": "heroic",
+                         "positive_upscale_prompt": "hero art"},
+                        {"mood": "minimal",
+                         "positive_upscale_prompt": "logo art"}])
+        with mock.patch.object(main.palette_mod, "ai_theme_naming",
+                               lambda *a, **k: next(replies)):
+            ctx_for, _ = main._per_image_contexts(
+                cfg, self.tmp, "TF2", pal, None, None, lambda m: None)
+            a = ctx_for(self.img["hero_2"], "hero")
+            b = ctx_for(self.img["logo"], "logo")
+        self.assertEqual(a["positive_upscale_prompt"], "hero art")
+        self.assertEqual(b["positive_upscale_prompt"], "logo art")
+        self.assertNotEqual(a["mood"], b["mood"])
+
+    def test_descriptions_are_cached_per_image(self):
+        cfg = self._cfg()
+        pal = {"appearance": "dark", "theme_name": "TF2"}
+        calls = []
+
+        def fake(cfg, path, palette, game, log):
+            calls.append(os.path.basename(path))
+            return {"mood": os.path.basename(path)}
+
+        with mock.patch.object(main.palette_mod, "ai_theme_naming", fake):
+            for _ in range(2):
+                ctx_for, flush = main._per_image_contexts(
+                    cfg, self.tmp, "TF2", pal, None, None, lambda m: None)
+                ctx_for(self.img["logo"], "logo")
+                flush()
+        self.assertEqual(calls, ["logo.png"])   # second pass: cache hit
+
+    def test_toggle_off_reuses_the_game_context(self):
+        cfg = self._cfg(per_image=False)
+        pal = {"appearance": "dark", "theme_name": "TF2"}
+        with mock.patch.object(main.palette_mod, "ai_theme_naming") as vlm:
+            ctx_for, _ = main._per_image_contexts(
+                cfg, self.tmp, "TF2", pal, {"mood": "shared"}, None,
+                lambda m: None)
+            a = ctx_for(self.img["hero_2"], "hero")
+            b = ctx_for(self.img["logo"], "logo")
+        vlm.assert_not_called()
+        self.assertEqual(a["mood"], "shared")
+        self.assertEqual(b, a)
+
+    def test_vlm_failure_falls_back_to_the_game_context(self):
+        cfg = self._cfg()
+        pal = {"appearance": "dark", "theme_name": "TF2"}
+        with mock.patch.object(main.palette_mod, "ai_theme_naming",
+                               lambda *a, **k: None):
+            ctx_for, _ = main._per_image_contexts(
+                cfg, self.tmp, "TF2", pal, {"mood": "hero mood"}, None,
+                lambda m: None)
+            ctx = ctx_for(self.img["logo"], "logo")
+        self.assertEqual(ctx["mood"], "hero mood")
+
+    def test_prompt_change_invalidates_the_cache(self):
+        pal = {"appearance": "dark", "theme_name": "TF2"}
+        calls = []
+
+        def fake(cfg, path, palette, game, log):
+            calls.append(1)
+            return {"mood": "x"}
+
+        with mock.patch.object(main.palette_mod, "ai_theme_naming", fake):
+            cfg = self._cfg()
+            ctx_for, flush = main._per_image_contexts(
+                cfg, self.tmp, "TF2", pal, None, None, lambda m: None)
+            ctx_for(self.img["icon"], "icon")
+            flush()
+            cfg2 = self._cfg()
+            cfg2["ai"]["prompt"] = "a different naming prompt"
+            ctx_for, flush = main._per_image_contexts(
+                cfg2, self.tmp, "TF2", pal, None, None, lambda m: None)
+            ctx_for(self.img["icon"], "icon")
+            flush()
+        self.assertEqual(len(calls), 2)
+
+    def test_queue_uses_the_per_image_context(self):
+        cfg = {"cache_dir": self.tmp,
+               "upscaling": {"enabled": True, "provider": "comfy"},
+               "comfy": {"host": "127.0.0.1", "port": 8188,
+                         "workflow": ""}}
+        art = {"hero": self.img["hero_1"],
+               "hero_candidates": [self.img["hero_1"], self.img["hero_2"]],
+               "logo": self.img["logo"], "icon": self.img["icon"]}
+        cfg["hero"] = {"mode": "rotate", "count": 2}
+        mons = [{"role": "hero", "rect": (0, 0, 5120, 1440)}]
+        queued = []
+        seen = set()
+
+        def fake_queue(src, dst, cfg, w, h, context=None, role=None):
+            # queue_upscale dedupes src+dst — mirror that here
+            if dst in seen:
+                return False
+            seen.add(dst)
+            queued.append(context)
+            return True
+
+        ctx_for = lambda path, role: {"game": "TF2",
+                                      "mood": os.path.basename(path)}
+        with mock.patch.object(main.upscale, "queue_upscale", fake_queue):
+            main.upscale_toward_monitors(
+                cfg, art, mons, "TF2", lambda m: None,
+                {"game": "TF2", "mood": "base"}, queue_only=True,
+                ctx_for=ctx_for)
+        self.assertEqual(len(queued), 2)
+        self.assertTrue(all(c["mood"] != "base" for c in queued))
+        self.assertNotEqual(queued[0]["mood"], queued[1]["mood"])
 
 
 class TestComfyWorkflow(unittest.TestCase):

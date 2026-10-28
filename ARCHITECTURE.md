@@ -4,7 +4,7 @@ This document explains how the app works, maps every module, and records the
 decisions and recent changes so another engineer (or another agent in a
 different harness) can pick up and keep improving it with minimal ramp-up.
 
-Current version: **1.11.1**
+Current version: **1.12.0**
 
 ---
 
@@ -77,9 +77,11 @@ steamdetect.get_running/owned_games  ->  {appid, name, ...}
 artwork.fetch_artwork  ->  {hero, hero_candidates[], logo, icon}   (cached per game)
         │
 palette.build_palette  ->  {colors[16], accent, appearance, background, ...}
-   (+ palette.ai_theme_naming ->  {theme_name, mood, ...extra VLM keys})
+   (+ palette.ai_theme_naming, once per image -> {mood, ...extra VLM keys})
         │
-upscale_toward_monitors  (optional, mutates art paths to upscaled copies)
+upscale_toward_monitors  (optional; per-image prompt contexts, mutates art)
+        │
+livewall.maybe_generate  (optional; per-hero prompt contexts)
         │
 wallpaper.compose_wallpaper  ->  span/tiles image
 theme.write_theme_file + apply_theme + write_registry_colors
@@ -111,6 +113,13 @@ forced.
 - `run_pipeline` (the pipeline), `check_once` (detection + hold + de-dupe),
   `reapply`, `reapply_from_cache` (gallery), `fetch_library` (Ultimate Fetch),
   `regenerate_cache` (Regenerate All), `upscale_pending_estimate`.
+- `_upscale_context` builds the fixed placeholder set (`{game}`, `{mood}`,
+  `{theme_name}` = the GAME name, `{appearance}`, `{palette_mode}` + custom VLM
+  keys); `_per_image_contexts` turns it into a `ctx_for(path, role)` provider
+  that describes **each image separately** (content-hash cached in
+  `cache/<key>/image_prompts.json`, 10-char VLM config fingerprint in
+  `prompt_sig`). Upscale/video jobs each store their own context, so deferred
+  work drained later still gets the right prompts.
 - The `main()` service loop: live-reloads config each cycle, drains the Comfy
   upscale queue, kicks the live-wallpaper drain worker, runs `check_once`,
   sleeps `poll_interval_seconds`.
@@ -137,6 +146,9 @@ forced.
 - `ai_theme_naming` calls an OpenAI-compatible VLM (LM Studio / Ollama /
   OpenRouter) with an image + prompt, parses a JSON object back. Self-gates on
   `ai.enabled`/`base_url`/`model`/`use_for.theme_naming`; returns `None` cleanly.
+  Called once per image by `main._per_image_contexts` (the active hero's pass is
+  reused for its own key). Its `theme_name` is deliberately **not** used: themes
+  are named after the game.
 
 ### `wallpaper.py` (compositing, shared)
 - `assign_roles` (largest=hero, then logo, then icon; config overrides).
@@ -267,7 +279,7 @@ app directory by `save_config` + `cfg_path` / `safe_join`.
 
 ## 8. Testing
 
-- `python -m unittest discover -s tests` (stdlib only; ~250 tests).
+- `python -m unittest discover -s tests` (stdlib only; ~257 tests).
 - Covers path sandboxing, palette math, Steam parsing, art caching, the
   regenerate/upscale passes, live-wallpaper graph conversion, and the web UI
   (incl. the local-only guard).
@@ -373,3 +385,19 @@ No behavior changed; all fixes are defensive.
 - Verified against the live ComfyUI instance: a 14-node Ultimate-SD-Upscale
   job round-trips through `api_to_graph` → `graph_to_api` with identical
   class types, link topology and widget values (0 diffs).
+
+### 1.12.0 — per-image prompts, game-based names
+
+- **Bug**: one VLM pass (the active hero) produced the context reused for every
+  hero candidate, logo, icon and video job — so `{positive_upscale_prompt}` &
+  friends described a different picture than the one processed. Deferred queue
+  jobs persisted that single context too.
+- **Fix**: `_per_image_contexts` describes each image individually (content
+  hash + role key, `image_prompts.json`, `prompt_sig` invalidation); the hero's
+  theme-level pass is reused for its own key. `upscale_toward_monitors` and
+  `livewall.maybe_generate` take an optional `ctx_for` and only call it when a
+  job is actually submitted (no VLM work for already-done art).
+- **Naming**: `theme_name` is the game name everywhere (`_upscale_context`,
+  `run_pipeline`, `regenerate_cache`, `_cached_palette_ctx`);
+  `_palette_title` normalises cached themes on re-apply.
+- **Toggle**: `ai.use_for.per_image_prompts` (config UI checkbox, default on).

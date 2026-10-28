@@ -1206,16 +1206,30 @@ def reapply_cached(cfg, cache_key, pal, hero_device, log=print):
         pass
     if not hero:
         return
-    ctx = {"game": (pal or {}).get("game_name") or str(cache_key),
-           "theme_name": (pal or {}).get("theme_name") or "",
+    game = ((pal or {}).get("game_name") or (pal or {}).get("theme_name")
+            or str(cache_key))
+    ctx = {"game": game, "theme_name": game,
            "mood": (pal or {}).get("mood") or "",
            "appearance": (pal or {}).get("appearance") or "dark",
            "palette_mode": (pal or {}).get("mode") or "colorful"}
     heroes = [hero] + [c for c in ((art or {}).get("hero_candidates") or [])
                        if isinstance(c, str) and c != hero]
-    maybe_generate(cfg, heroes, ctx, cache_key,
-                   (pal or {}).get("theme_name") or str(cache_key),
-                   hero_device, log)
+    ctx_for = None
+    try:  # per-image prompts, same as a normal theme run
+        import main as app
+        ctx_for, _flush = app._per_image_contexts(
+            cfg, os.path.join(cfg.get("cache_dir") or "cache",
+                              str(cache_key)),
+            game,
+            {"appearance": ctx["appearance"],
+             "mode": (pal or {}).get("mode")
+                     or cfg.get("palette_mode", "colorful"),
+             "theme_name": game},
+            (pal or {}).get("_vlm"), hero, log)
+    except Exception:
+        ctx_for = None
+    maybe_generate(cfg, heroes, ctx, cache_key, game, hero_device, log,
+                   ctx_for=ctx_for)
 
 
 def artwork_from_cache(cache_dir):
@@ -1301,7 +1315,7 @@ def sync_queue(cfg, cache_key, jobs):
 
 
 def maybe_generate(cfg, heroes, context, cache_key, theme_title,
-                   hero_device, log=print, apply=True):
+                   hero_device, log=print, apply=True, ctx_for=None):
     """Theme-pipeline hook: make sure EVERY hero candidate has a looping
     video, put a ready one on the wallpaper, and queue the rest.
 
@@ -1325,7 +1339,15 @@ def maybe_generate(cfg, heroes, context, cache_key, theme_title,
         if os.path.exists(dst):
             cached += 1
             continue
-        jobs.append({"src": hero, "dst": dst, "context": context or {},
+        job_ctx = context or {}
+        if ctx_for:
+            # per-image prompts: each hero's clip describes ITS OWN picture
+            # (falls back to the shared game context when unavailable)
+            try:
+                job_ctx = ctx_for(hero, "hero") or job_ctx
+            except Exception:
+                pass
+        jobs.append({"src": hero, "dst": dst, "context": job_ctx,
                      "cache_key": cache_key, "theme_title": theme_title,
                      "hero": hero, "attempts": 0})
     out["cached"] = cached

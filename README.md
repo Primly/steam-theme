@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.11.1-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.12.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -294,7 +294,7 @@ page is laid out as a **left sidebar with one tab per section**:
 | **Non-Steam games** | process watch list (Epic/GOG/emulators) |
 | **Steam** | API key, auto-detected SteamID64, live test |
 | **Artwork sources** | SteamGridDB / wallhaven keys, live test |
-| **AI / VLM** | OpenAI-compatible endpoint, presets, model dropdown, live test |
+| **AI / VLM** | OpenAI-compatible endpoint, presets, model dropdown, live test, *describe each image separately* toggle |
 | **Upscaling** | provider (Topaz / AI images / ComfyUI), Topaz key + model picker (Precision/Generative), per-role models, creativity, prompt; ComfyUI host/port, Export-API workflow JSON + per-role workflow overrides, defer-while-gaming |
 | **Live wallpaper** | enable, provider (ComfyUI), host/port, video workflow (Export API or normal save JSON), defer-while-gaming, generation timeout, Wallpaper Engine monitor |
 | **Extras** | Windows Terminal (Windows) / Konsole (Linux), SignalRGB (Windows) / OpenRGB (Linux) |
@@ -325,8 +325,9 @@ UI takes effect without restarts.
 | `system_mode` / `app_mode` | `"match"` | `match` the theme, or force `dark`/`light` |
 | `palette_mode` | `"colorful"` | `colorful` / `material` / `muted` |
 | `hero.count` / `mode` / `interval_minutes` / `shuffle` | `6` / `"pick"` / `30` / `false` | Hero candidates per game; `pick` one in the gallery or `rotate` as a slideshow |
-| `ai.enabled` / `base_url` / `api_key` / `model` | `false` | OpenAI-compatible VLM for theme naming |
-| `ai.prompt` | built-in | Custom naming prompt; `{game}`/`{colors}` placeholders |
+| `ai.enabled` / `base_url` / `api_key` / `model` | `false` | OpenAI-compatible VLM for mood + per-image descriptions |
+| `ai.use_for.theme_naming` / `per_image_prompts` | `true` / `true` | Enable AI; describe every image separately (off = one description per game, reused everywhere) |
+| `ai.prompt` | built-in | Custom VLM prompt; `{game}`/`{colors}` placeholders |
 | `upscaling.enabled` / `provider` | `false` | `topaz` (cloud, credits), `comfy` (local ComfyUI, free), or `ai` (OpenAI images endpoint) |
 | `topaz.api_key` / `model` / `creativity` / `prompt` / `models` | — | Topaz settings; `models.hero/logo/icon` override per role |
 | `comfy.host` / `port` / `workflow` / `workflows` / `defer_while_gaming` / `timeout_seconds` / `unload_models_after` | `127.0.0.1` / `8188` / built-in / — / `true` / `900` / `true` | Local ComfyUI upscaling; `workflow` = Export-API JSON (empty = built-in Ultimate SD Upscale default); `workflows.hero/logo/icon` override per role; jobs defer to a queue while a game runs; `unload_models_after` frees models from RAM/VRAM after each generation |
@@ -413,29 +414,45 @@ Anything Ultimate Fetch already upscaled is reused at theme time (the
 per-model cache is shared), so pre-fetched games theme instantly with zero
 extra credits.
 
-## 🎨 AI / VLM theme naming
+## 🎨 AI / VLM descriptions
 
 Point the AI section at any OpenAI-compatible chat endpoint — local (LM
-Studio, Ollama, vLLM) or cloud (OpenRouter, etc.). The model is shown the
-**hero artwork only** (the logo and icon are never sent), along with the
-game's name and its extracted palette colors. It returns a theme name, a
-mood description, and (in auto mode) a dark/light + palette-style opinion.
-The mood also feeds generative upscaling. Everything is optional — no AI
-configured just means `"<Game> — Steam Theme"` names.
+Studio, Ollama, vLLM) or cloud (OpenRouter, etc.). Everything is optional —
+with no AI configured, themes are still named after the game and upscaling
+runs with plain prompts.
 
-**Custom prompts:** the *Naming prompt* field in the AI section is pre-filled
-with the built-in default as a guide — edit it freely to steer naming style
-(e.g. "name themes like 80s synthwave album titles"). `{game}` and
-`{colors}` placeholders are filled in per theme. If your prompt omits the
-"respond with JSON" instruction, it's appended automatically so parsing
-can't break; the **Reset** button restores the default. Leaving the field
-unchanged (or empty) keeps the built-in prompt out of your config entirely.
+- **Themes are named after the game** (`"The Witcher 3: Wild Hunt"`). The
+  AI's `theme_name` is ignored: it only ever described the single image it
+  was shown, so it made a poor name for the whole theme.
+- **Each image is described separately** (default): every hero candidate,
+  logo and icon gets its own VLM pass — the image, the game name and *that*
+  image's palette — so `{positive_upscale_prompt}`,
+  `{negative_upscale_prompt}` and `{loop_prompt}` actually fit the picture
+  being enlarged or animated. Passes are cached per image content in
+  `cache/<game>/image_prompts.json`, so an image is only ever described once
+  (delete the file to re-describe).
+- **The active hero** also supplies the theme-wide dark/light + palette-style
+  opinion (in auto mode), and the deferred queues store each job's own
+  description, so a job drained days later still has the right prompts.
+- **Cost**: 3 VLM passes per game in pick mode (hero, logo, icon), up to 8
+  in rotate mode. Turn *Describe each image separately* off for one shared
+  description per game (faster, but a logo can end up described like a hero).
+
+**Custom prompts:** the *VLM prompt* field in the AI section is pre-filled
+with the built-in default as a guide — edit it freely to steer the
+style/mood vocabulary (e.g. "describe scenes like 80s synthwave album
+covers"). `{game}` and `{colors}` placeholders are filled in per theme. If
+your prompt omits the "respond with JSON" instruction, it's appended
+automatically so parsing can't break; the **Reset** button restores the
+default. Leaving the field unchanged (or empty) keeps the built-in prompt out
+of your config entirely.
 
 **Extra JSON keys become placeholders.** Ask the model for additional keys —
 e.g. `"positive_upscale_prompt"` — and every value comes back through
 the whole pipeline as a placeholder (`{positive_upscale_prompt}`), usable in
 Topaz generative prompts *and* inside ComfyUI workflow JSON. This is how
-the VLM can steer your upscaler per game; see the upscaling sections below.
+the VLM steers your upscaler for **each individual image**; see the upscaling
+sections below.
 
 ## 🔎 Upscaling
 
@@ -687,6 +704,7 @@ Everything the app writes stays inside its own folder:
 |---|---|
 | `config.json` | your settings + API keys (gitignored, never committed) |
 | `cache/<appid>/` | per-game art, upscales, palette, theme file, wallpapers |
+| `cache/<appid>/image_prompts.json` | per-image VLM descriptions (keyed by content hash; delete to re-describe) |
 | `cache/comfy_queue.json` | ComfyUI upscale jobs deferred while a game is running (drained automatically) |
 | `cache/<appid>/livewall/` | looping wallpaper videos + their Wallpaper Engine `project.json` (per hero-image hash) |
 | `cache/video_queue.json` | live-wallpaper jobs deferred while a game is running (drained automatically) |
@@ -720,7 +738,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 250 tests
+python -m unittest discover -s tests -v   # 257 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -766,6 +784,17 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.12.0** — **per-image AI prompts + game-based theme names**. One VLM pass
+  used to describe only the active hero, and that one description was reused for
+  every hero candidate, the logo, the icon and every looping video — so
+  `{positive_upscale_prompt}` could describe a completely different picture from
+  the one being upscaled. Now every image gets its own VLM pass (content-hash
+  cached in `cache/<game>/image_prompts.json`, so it's one call per image ever),
+  and each deferred upscale/video job stores its own prompts. The *Describe each
+  image separately* toggle (AI section, default on) restores the old
+  one-per-game behaviour. Themes are also named after the game
+  (`"The Witcher 3: Wild Hunt"`) instead of the AI's `theme_name`, which only
+  ever described the hero.
 - **1.11.1** — **editable jobs in ComfyUI's history**: every job the app
   submits now carries a real *graph* in `extra_data.extra_pnginfo.workflow`,
   so "Open as workflow in a new tab" actually restores the workflow. (An

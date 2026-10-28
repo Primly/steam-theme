@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -36,7 +37,7 @@ else:
     import linux_theme as theme_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-__version__ = "1.11.1"
+__version__ = "1.12.0"
 
 
 def safe_join(base, *parts):
@@ -132,8 +133,9 @@ def _upscale_context(name, pal, ai, cfg):
     """
     ctx = {"game": name,
            "mood": (ai or {}).get("mood") or "",
-           "theme_name": (ai or {}).get("theme_name")
-                         or f"{name} — Steam Theme",
+           # themes are named after the game; the VLM's theme_name only ever
+           # described the one image it was shown
+           "theme_name": pal.get("theme_name") or name,
            "appearance": pal.get("appearance", "dark"),
            "palette_mode": (ai or {}).get("palette_mode")
                            or cfg.get("palette_mode", "colorful")}
@@ -157,8 +159,120 @@ def _upscale_context(name, pal, ai, cfg):
     return ctx
 
 
+def _prompt_sig(cfg):
+    """Fingerprint of the VLM setup: editing the model, endpoint or naming
+    prompt invalidates the cached per-image descriptions."""
+    ai = cfg.get("ai", {}) or {}
+    blob = json.dumps({"model": ai.get("model"),
+                       "base": ai.get("base_url"),
+                       "prompt": ai.get("prompt") or ""}, sort_keys=True)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:10]
+
+
+def _image_key(path, role):
+    """Per-image cache key: content hash + role, so refetched/edited art gets
+    a fresh description and a renamed file reuses its old one."""
+    with open(path, "rb") as f:
+        digest = hashlib.sha1(f.read()).hexdigest()[:12]
+    return f"{digest}:{role or 'hero'}"
+
+
+def _load_image_prompts(path, sig):
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict) or data.get("prompt_sig") != sig:
+        return {}          # model/naming prompt changed — describe again
+    images = data.get("images")
+    return images if isinstance(images, dict) else {}
+
+
+def _save_image_prompts(path, sig, images):
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "prompt_sig": sig, "images": images},
+                      f, indent=2)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def _per_image_contexts(cfg, cache, name, pal, hero_ai, hero_path, log):
+    """Build a `ctx_for(path, role) -> prompt context` for THIS image.
+
+    One VLM pass per image (cached in cache/image_prompts.json), so a
+    generative upscale or a looping video gets prompts describing the picture
+    it is actually working on instead of the hero's. The active hero reuses
+    the theme-level VLM pass (no duplicate request). Returns
+    `(ctx_for, flush)`; flush() persists anything newly described."""
+    ai_cfg = cfg.get("ai", {}) or {}
+    use = ai_cfg.get("use_for") or {}
+    per_image = use.get("per_image_prompts", True) is not False
+    enabled = bool(ai_cfg.get("enabled") and use.get("theme_naming", True))
+    store = os.path.join(cache, "image_prompts.json")
+    sig = _prompt_sig(cfg)
+    images = _load_image_prompts(store, sig) if per_image else {}
+    dirty = [False]
+
+    if per_image and enabled and hero_ai and hero_path:
+        try:
+            hk = _image_key(hero_path, "hero")
+            if hk not in images:
+                images[hk] = hero_ai
+                dirty[0] = True
+        except OSError:
+            pass
+
+    def flush():
+        if dirty[0]:
+            _save_image_prompts(store, sig, images)
+            dirty[0] = False
+
+    def fallback():
+        return _upscale_context(name, pal, hero_ai, cfg)
+
+    def ctx_for(path, role):
+        role = role or "hero"
+        if not (per_image and enabled):
+            return fallback()
+        try:
+            key = _image_key(path, role)
+        except OSError:
+            return fallback()
+        ai = images.get(key)
+        if ai is None:
+            try:
+                img_pal = palette_mod.build_palette(
+                    path,
+                    pal.get("mode") or cfg.get("palette_mode", "colorful"),
+                    force=pal.get("appearance"))
+                ai = palette_mod.ai_theme_naming(cfg, path, img_pal, name, log)
+            except Exception as e:
+                log(f"  [vlm] {os.path.basename(path)}: {e}")
+                ai = None
+            if not isinstance(ai, dict) or not ai:
+                return fallback()
+            log(f"  [vlm] {os.path.basename(path)} ({role}): "
+                f"{(ai.get('mood') or ai.get('description') or '')[:70]}")
+            images[key] = ai
+            dirty[0] = True
+            flush()
+        ctx = _upscale_context(name, pal, ai, cfg)
+        # theme-wide attributes never vary per image
+        ctx["appearance"] = pal.get("appearance", "dark")
+        ctx["palette_mode"] = (pal.get("mode")
+                               or cfg.get("palette_mode", "colorful"))
+        ctx["theme_name"] = pal.get("theme_name") or name
+        return ctx
+
+    return ctx_for, flush
+
+
 def upscale_toward_monitors(cfg, art, monitors, name, log, up_ctx,
-                            queue_only=False):
+                            queue_only=False, ctx_for=None):
     """The upscale pass shared by theme runs, Ultimate Fetch and Regenerate
     All: rotate mode upscales ALL hero candidates toward the hero monitor,
     pick mode only the active one; logo/icon upscale toward their centered
@@ -173,9 +287,15 @@ def upscale_toward_monitors(cfg, art, monitors, name, log, up_ctx,
     """
     submitted = 0
 
+    def ctx_of(path, role):
+        # per-image prompt context; the shared game-level context is the
+        # fallback when the VLM is off or this image failed its pass
+        return ctx_for(path, role) if ctx_for else up_ctx
+
     def up(path, w, h, role):
         nonlocal submitted
         dst = upscale.cache_path(path, cfg, role)
+        ctx = up_ctx
         if queue_only:
             if os.path.exists(dst):
                 return dst
@@ -191,11 +311,22 @@ def upscale_toward_monitors(cfg, art, monitors, name, log, up_ctx,
             needed, _ = upscale._needs_upscale(path, w, h)
             if not needed:
                 return path
-            if upscale.queue_upscale(path, dst, cfg, w, h, up_ctx, role):
+            if upscale.queue_upscale(path, dst, cfg, w, h,
+                                     ctx_of(path, role), role):
                 submitted += 1
             return path
         had_cache = os.path.exists(dst)
-        out = upscale.maybe_upscale(path, w, h, cfg, log, context=up_ctx,
+        if (not had_cache and cfg.get("upscaling", {}).get("enabled")
+                and not upscale.find_existing_upscale(path)):
+            # only describe the image when an upscale will actually run —
+            # no VLM passes for art that is already done
+            try:
+                needed, _ = upscale._needs_upscale(path, w, h)
+            except Exception:
+                needed = False
+            if needed:
+                ctx = ctx_of(path, role)
+        out = upscale.maybe_upscale(path, w, h, cfg, log, context=ctx,
                                     role=role)
         if out == dst and out != path and not had_cache:
             submitted += 1
@@ -270,13 +401,19 @@ def run_pipeline(cfg, game, log, dry_run=False):
             pal = palette_mod.build_palette(hero, ai["palette_mode"], force=force)
             if pref == "auto":
                 pal["appearance"] = ai.get("appearance", pal["appearance"])
-    theme_name = (ai or {}).get("theme_name") or f"{name} — Steam Theme"
+    # Themes are named after the game they belong to. A VLM theme_name only
+    # ever described the single image it was shown (the hero), so it was a
+    # poor name for the theme as a whole.
+    theme_name = name
     mood = (ai or {}).get("mood", "")
+    pal["theme_name"] = theme_name
 
-    # upscale after VLM naming so its JSON values (mood, theme_name, plus
-    # any custom keys the user's naming prompt asks for) can steer
-    # generative Topaz models via prompt placeholders
+    # upscale after VLM naming so its JSON values (mood, plus any custom keys
+    # the user's naming prompt asks for) can steer generative Topaz models
+    # via prompt placeholders. Each image gets its own VLM description.
     up_ctx = _upscale_context(name, pal, ai, cfg)
+    ctx_for, flush_ctx = _per_image_contexts(cfg, cache, name, pal, ai, hero,
+                                             log)
     # the live-wallpaper videos use the ORIGINAL hero art: video diffusion
     # downsamples to the workflow's output size anyway, and a 5120px upscale
     # is pure upload/wait overhead. EVERY candidate gets a video (rotate
@@ -286,14 +423,15 @@ def run_pipeline(cfg, game, log, dry_run=False):
     for _c in (art.get("hero_candidates") or []):
         if isinstance(_c, str) and _c not in video_candidates:
             video_candidates.append(_c)
-    upscale_toward_monitors(cfg, art, monitors, name, log, up_ctx)
+    upscale_toward_monitors(cfg, art, monitors, name, log, up_ctx,
+                            ctx_for=ctx_for)
+    flush_ctx()
     # re-derive after the upscale pass: rotate mode swaps candidate paths for
     # their upscaled versions, which Stage 4 composes into slide variants
     hero_set = _hero_settings(cfg)
     candidates = [c for c in (art.get("hero_candidates") or [])
                   if isinstance(c, str)]
     rotate_ok = hero_set["mode"] == "rotate" and len(candidates) > 1
-    pal["theme_name"] = theme_name
     pal["mood"] = mood
     pal["game_name"] = name  # per-game SignalRGB effect titles, gallery, etc.
     if ai:
@@ -369,7 +507,9 @@ def run_pipeline(cfg, game, log, dry_run=False):
     livewall.maybe_generate(cfg, video_candidates, up_ctx, cache_key,
                             theme_name,
                             next((m["device"] for m in monitors
-                                  if m["role"] == "hero"), ""), log)
+                                  if m["role"] == "hero"), ""), log,
+                            ctx_for=ctx_for)
+    flush_ctx()
     return {"theme_path": theme_path, "palette": pal, "wallpaper": wallpaper}
 
 
@@ -399,6 +539,12 @@ def reapply(cfg, log):
         theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
 
 
+def _palette_title(pal, cache_key):
+    """Display/apply name for a cached theme — the game it belongs to (themes
+    are no longer named after a VLM suggestion)."""
+    return str(pal.get("game_name") or pal.get("theme_name") or cache_key)
+
+
 def reapply_from_cache(cfg, log, cache_key):
     """Re-apply a theme straight from its cache folder (theme gallery)."""
     cache = safe_join(cfg_path(cfg, "cache_dir", "cache"), cache_key)
@@ -407,15 +553,15 @@ def reapply_from_cache(cfg, log, cache_key):
         raise FileNotFoundError(f"no cached theme for {cache_key!r}")
     with open(os.path.join(cache, "palette.json"), encoding="utf-8") as f:
         pal = json.load(f)
-    log(f"gallery: re-applying '{pal.get('theme_name') or cache_key}'")
+    title = _palette_title(pal, cache_key)
+    log(f"gallery: re-applying '{title}'")
     sys_mode = cfg.get("system_mode", "match")
     app_mode = cfg.get("app_mode", "match")
     theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
     theme_mod.apply_theme(theme_path, log, cfg=cfg)
     time.sleep(3)
     theme_mod.write_registry_colors(pal, log, sys_mode, app_mode)
-    extras.apply_terminal(cfg, pal, pal.get("theme_name") or cache_key,
-                          pal.get("wallpaper"), log)
+    extras.apply_terminal(cfg, pal, title, pal.get("wallpaper"), log)
     extras.apply_rgb(cfg, pal, log)
     mon = theme_mod.assign_roles(theme_mod.enumerate_monitors(),
                                  cfg.get("monitors", []), lambda m: None)
@@ -426,13 +572,9 @@ def reapply_from_cache(cfg, log, cache_key):
     # reverting to the last-played game on the next poll
     state = load_state(cfg)
     state.update({"theme_path": theme_path, "last_cache_key": cache_key,
-                  "last_identity": cache_key,
-                  "last_name": pal.get("theme_name") or cache_key,
-                  "manual_hold": {
-                      "identity": cache_key,
-                      "name": (pal.get("game_name") or pal.get("theme_name")
-                               or cache_key),
-                      "held_at": time.time()}})
+                  "last_identity": cache_key, "last_name": title,
+                  "manual_hold": {"identity": cache_key, "name": title,
+                                  "held_at": time.time()}})
     try:
         state["last_appid"] = int(cache_key)
     except ValueError:
@@ -471,7 +613,8 @@ def _livewall_rotation_tick(cfg, log):
     try:
         with open(os.path.join(cache, "palette.json"),
                   encoding="utf-8") as f:
-            title = json.load(f).get("theme_name") or key
+            tp = json.load(f)
+        title = _palette_title(tp, key)
     except (OSError, json.JSONDecodeError):
         pass
     mon = theme_mod.assign_roles(theme_mod.enumerate_monitors(),
@@ -480,24 +623,36 @@ def _livewall_rotation_tick(cfg, log):
     livewall.rotate_step(cfg, candidates, key, title, hero_dev, log)
 
 
-def _cached_palette_ctx(cfg, art, pal, name):
+def _cached_palette_ctx(cfg, art, pal, name, cache=None, log=print):
     """Prompt context for a cache pass, from the theme's stored palette —
-    no VLM round-trip (palette.json already holds the values the VLM
-    produced when the theme was made)."""
+    no theme-level VLM round-trip (palette.json already holds what the VLM
+    produced when the theme was made). Returns `(game_ctx, ctx_for)`, where
+    ctx_for describes individual images by their own cached passes."""
     hero = art.get("hero") or next(iter(art.values()))
     pref = cfg.get("appearance_preference")
     if pref not in ("dark", "light", "auto"):
         pref = "dark" if cfg.get("force_dark_mode") else "auto"
-    p = palette_mod.build_palette(hero, pal.get("mode")
-                                  or cfg.get("palette_mode", "colorful"),
-                                  force=None if pref == "auto" else pref)
-    for k in ("theme_name", "mood", "appearance"):
+    try:
+        p = palette_mod.build_palette(hero, pal.get("mode")
+                                      or cfg.get("palette_mode", "colorful"),
+                                      force=None if pref == "auto" else pref)
+    except Exception:
+        # unreadable art must not break a cache pass — reuse the stored values
+        p = {"appearance": pal.get("appearance") or "dark",
+             "mode": pal.get("mode") or cfg.get("palette_mode", "colorful")}
+    for k in ("mood", "appearance"):
         if pal.get(k):
             p[k] = pal[k]
-    return _upscale_context(name, p, pal.get("_vlm"), cfg)
+    p["theme_name"] = name      # themes are named after the game
+    ctx_for = None
+    if cache:
+        ctx_for, _flush = _per_image_contexts(cfg, cache, name, p,
+                                              pal.get("_vlm"), hero, log)
+    return _upscale_context(name, p, pal.get("_vlm"), cfg), ctx_for
 
 
-def _ufetch_upscale(cfg, art, monitors, name, log, queue_only=False):
+def _ufetch_upscale(cfg, art, monitors, name, log, queue_only=False,
+                    cache=None):
     """Ultimate Fetch's upscale pass for one game. Builds the same prompt
     context a real theme run would — a palette for appearance, and VLM
     naming when AI is enabled (local/free; its JSON values fill generative
@@ -512,9 +667,14 @@ def _ufetch_upscale(cfg, art, monitors, name, log, queue_only=False):
     ai = palette_mod.ai_theme_naming(cfg, hero, pal, name, log)
     if ai and pref == "auto" and ai.get("appearance") in ("dark", "light"):
         pal["appearance"] = ai["appearance"]
+    pal["theme_name"] = name
+    ctx_for = None
+    if cache:
+        ctx_for, _flush = _per_image_contexts(cfg, cache, name, pal, ai,
+                                              hero, log)
     return upscale_toward_monitors(cfg, art, monitors, name, log,
                                    _upscale_context(name, pal, ai, cfg),
-                                   queue_only=queue_only)
+                                   queue_only=queue_only, ctx_for=ctx_for)
 
 
 def _pending_upscales(cfg, art, monitors):
@@ -655,7 +815,7 @@ def fetch_library(cfg, log=print, should_cancel=lambda: False,
         if art and with_upscale:
             try:
                 stats["upscaled"] += _ufetch_upscale(cfg, art, monitors,
-                                                     name, log)
+                                                     name, log, cache=cache)
             except Exception as e:
                 log(f"  [ufetch] {name}: upscale pass failed: {e}")
     if progress:
@@ -779,12 +939,12 @@ def regenerate_cache(cfg, log=print, should_cancel=lambda: False,
                                                  log)
                 if ai:
                     pal["_vlm"] = ai
-                    if ai.get("theme_name"):
-                        pal["theme_name"] = ai["theme_name"]
+                    pal["theme_name"] = name   # named after the game
                     if ai.get("mood"):
                         pal["mood"] = ai["mood"]
-                    log(f"  [regen] {name}: VLM re-named as "
-                        f"'{pal.get('theme_name')}'")
+                    log(f"  [regen] {name}: VLM described the hero"
+                        + (f" (mood '{pal['mood']}')"
+                           if pal.get("mood") else ""))
                     try:
                         with open(os.path.join(cache, "palette.json"),
                                   "w", encoding="utf-8") as f:
@@ -793,11 +953,18 @@ def regenerate_cache(cfg, log=print, should_cancel=lambda: False,
                         pass
             except Exception as e:
                 log(f"  [regen] {name}: VLM naming failed: {e}")
+        ctx = ctx_for = None
+        if art and (up or with_videos):
+            try:
+                ctx, ctx_for = _cached_palette_ctx(cfg, art, pal, name,
+                                                   cache, log)
+            except Exception as e:
+                log(f"  [regen] {name}: prompt context failed: {e}")
         if art and up:
             try:
-                ctx = _cached_palette_ctx(cfg, art, pal, name)
                 n = upscale_toward_monitors(cfg, art, monitors, name, log,
-                                            ctx, queue_only=True)
+                                            ctx, queue_only=True,
+                                            ctx_for=ctx_for)
                 if n:
                     stats["upscaled"] += n
                     acted = True
@@ -809,20 +976,9 @@ def regenerate_cache(cfg, log=print, should_cancel=lambda: False,
                 heroes = ([hero] if hero else []) + [
                     c for c in (art.get("hero_candidates") or [])
                     if isinstance(c, str) and c != hero]
-                vlm = pal.get("_vlm") or {}
-                ctx = {"game": name,
-                       "theme_name": pal.get("theme_name") or "",
-                       "mood": pal.get("mood") or "",
-                       "appearance": pal.get("appearance") or "dark",
-                       "palette_mode": pal.get("mode") or "colorful"}
-                for _k, _v in vlm.items():
-                    if _k in ctx or not isinstance(_v, (str, int, float, bool)):
-                        continue
-                    ctx[_k] = _v if isinstance(_v, str) else str(_v)
                 out = livewall.maybe_generate(
-                    cfg, heroes, ctx, key,
-                    pal.get("theme_name") or name, hero_dev, log,
-                    apply=False) or {}
+                    cfg, heroes, ctx or {}, key, name, hero_dev, log,
+                    apply=False, ctx_for=ctx_for) or {}
                 if out.get("queued"):
                     stats["videos"] += out["queued"]
                     acted = True

@@ -162,8 +162,11 @@ def build_naming_prompt(cfg, game_name, palette):
 
 
 def ai_theme_naming(cfg, image_path, palette, game_name, log=print):
-    """Ask a local VLM (OpenAI-compatible, e.g. LM Studio) or OpenRouter for a
-    mood classification + theme name. Returns dict or None. Never raises."""
+    """Ask a local VLM (OpenAI-compatible, e.g. LM Studio) or OpenRouter to
+    describe ONE image: mood + any extra prompt keys the JSON contract asks
+    for. The JSON may also carry a theme_name — themes are named after the
+    game, so callers deliberately ignore it. Returns dict or None. Never
+    raises."""
     src = None
     ai = cfg.get("ai", {})
     if ai.get("enabled") and ai.get("base_url") and ai.get("model") \

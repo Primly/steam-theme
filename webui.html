@@ -255,7 +255,7 @@
 
 <section id="tab-ai" class="panel">
   <h2>AI / VLM (OpenAI-compatible)</h2>
-  <p class="hint">Used for theme naming + mood classification (and upscaling, if selected below). Point at a local server (LM Studio, Ollama) or a cloud provider like OpenRouter.</p>
+  <p class="hint">Used for mood classification and per-image upscale/video prompts (theme names always come from the game itself). Point at a local server (LM Studio, Ollama) or a cloud provider like OpenRouter.</p>
   <div class="row">
     <div class="switch"><input type="checkbox" id="aiEnabled"><span>Enable AI features</span></div>
   </div>
@@ -285,10 +285,17 @@
     <button onclick="fetchModels()">Refresh list</button>
   </div>
   <div class="row">
-    <div class="switch"><input type="checkbox" id="aiNaming"><span>Theme naming + mood classification</span></div>
+    <div class="switch"><input type="checkbox" id="aiNaming"><span>Mood classification + prompt generation</span></div>
   </div>
   <div class="row">
-    <label for="aiPrompt" class="top">Naming prompt</label>
+    <div class="switch"><input type="checkbox" id="aiPerImage" checked><span>Describe each image separately</span></div>
+  </div>
+  <p class="hint">With this on, every hero / logo / icon gets its own VLM pass, so an upscale or a
+    looping video uses prompts that fit <i>that</i> picture instead of the hero's. Descriptions are
+    cached in <code>cache/&lt;game&gt;/image_prompts.json</code> (delete it to re-describe). Off = one
+    description per game, reused everywhere (faster, less accurate).</p>
+  <div class="row">
+    <label for="aiPrompt" class="top">VLM prompt</label>
     <textarea id="aiPrompt" style="min-height:110px"></textarea>
     <button onclick="setV('aiPrompt', AI_DEFAULT_PROMPT)" title="Restore the built-in prompt">Reset</button>
   </div>
@@ -841,6 +848,7 @@ async function load() {
   setC("aiEnabled", ai.enabled); setV("aiBase", ai.base_url); setV("aiKey", ai.api_key);
   populateModelSelect([], ai.model);
   setC("aiNaming", (ai.use_for || {theme_naming: true}).theme_naming !== false);
+  setC("aiPerImage", (ai.use_for || {}).per_image_prompts !== false);
   setV("aiPrompt", ai.prompt || AI_DEFAULT_PROMPT);
   const up = cfg.upscaling || {};
   setC("upEnabled", up.enabled); setV("upProvider", up.provider || "topaz");
@@ -919,7 +927,8 @@ async function save(apply) {
   cfg.steamgriddb_api_key = v("sgdbKey"); cfg.wallhaven_api_key = v("whKey");
   cfg.ai = {enabled: document.getElementById("aiEnabled").checked,
             base_url: v("aiBase"), api_key: v("aiKey"), model: modelVal(),
-            use_for: {theme_naming: document.getElementById("aiNaming").checked}};
+            use_for: {theme_naming: document.getElementById("aiNaming").checked,
+                      per_image_prompts: document.getElementById("aiPerImage").checked}};
   const ap = v("aiPrompt");
   if (ap && ap !== AI_DEFAULT_PROMPT) cfg.ai.prompt = ap;  // unchanged/empty = built-in default
   delete cfg.vlm; delete cfg.openrouter;
