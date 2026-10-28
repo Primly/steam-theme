@@ -119,6 +119,108 @@ class TestGraphConversion(LiveWallFixture):
         self.assertNotIn("{loop_prompt}", json.dumps(api))
 
 
+class TestGraphSynthesis(unittest.TestCase):
+    """ComfyUI's history action ("Open as workflow in a new tab") only
+    accepts a *graph* in extra_data.extra_pnginfo.workflow — an Export-API
+    blob there fails validation and the action silently opens nothing. Jobs
+    submitted from an API workflow must therefore carry a synthesized graph."""
+
+    API = {
+        "1": {"class_type": "LoadImage", "inputs": {"image": "hero.png"}},
+        "2": {"class_type": "UpscaleModelLoader",
+              "inputs": {"model_name": "4x.pth"}},
+        "3": {"class_type": "UltimateSDUpscale",
+              "inputs": {"image": ["1", 0], "upscale_model": ["2", 0],
+                         "seed": 7, "steps": 20}},
+        "4": {"class_type": "SaveImage",
+              "inputs": {"images": ["3", 0],
+                         "filename_prefix": "steamtheme_ab12"}},
+    }
+
+    def test_shape_matches_comfyui_graph_schema(self):
+        g = livewall.api_to_graph(self.API)
+        self.assertEqual(g["version"], 0.4)
+        self.assertIsInstance(g["nodes"], list)
+        self.assertEqual(len(g["nodes"]), 4)
+        self.assertIsInstance(g["last_node_id"], int)
+        self.assertIsInstance(g["last_link_id"], int)
+        for n in g["nodes"]:
+            for key in ("id", "type", "pos", "size", "flags", "order",
+                        "mode", "properties"):
+                self.assertIn(key, n)
+            self.assertIsInstance(n["flags"], dict)
+            self.assertEqual(len(n["pos"]), 2)
+            self.assertEqual(len(n["size"]), 2)
+        for link in g["links"]:
+            self.assertEqual(len(link), 6)
+
+    def test_links_preserve_topology(self):
+        g = livewall.api_to_graph(self.API)
+        by_type = {n["type"]: n for n in g["nodes"]}
+        pairs = {(l[1], l[2], l[3], l[4]) for l in g["links"]}
+        self.assertIn((by_type["LoadImage"]["id"], 0,
+                       by_type["UltimateSDUpscale"]["id"], 0), pairs)
+        self.assertIn((by_type["UpscaleModelLoader"]["id"], 0,
+                       by_type["UltimateSDUpscale"]["id"], 1), pairs)
+        self.assertIn((by_type["UltimateSDUpscale"]["id"], 0,
+                       by_type["SaveImage"]["id"], 0), pairs)
+
+    def test_round_trips_through_graph_to_api(self):
+        g = livewall.api_to_graph(self.API)
+        back, errs = livewall.graph_to_api(g)
+        self.assertEqual(errs, [], errs)
+        self.assertEqual(len(back), len(self.API))
+        save = [n for n in back.values()
+                if n["class_type"] == "SaveImage"][0]
+        self.assertEqual(save["inputs"]["images"], ["3", 0])
+        self.assertEqual(save["inputs"]["filename_prefix"],
+                         "steamtheme_ab12")
+
+    def test_widget_values_are_never_null(self):
+        api = {"1": {"class_type": "LoadImage", "inputs": {}},
+               "2": {"class_type": "SaveImage",
+                     "inputs": {"images": ["1", 0]}}}
+        g = livewall.api_to_graph(api)
+        for n in g["nodes"]:
+            for w in n["widgets_values"]:
+                self.assertIsNotNone(w)
+
+    def test_object_info_orders_slots_and_fills_defaults(self):
+        defs = {
+            "LoadImage": {"input": {"required": {
+                "image": [["a.png", "b.png"], {}],
+                "upload": [["image"], {}]}},
+                "output": ["IMAGE", "MASK"],
+                "output_name": ["IMAGE", "MASK"]},
+            "SaveImage": {"input": {"required": {
+                "images": ["IMAGE", {}],
+                "filename_prefix": ["STRING", {"default": "ComfyUI"}]}},
+                "output": [], "output_name": []},
+        }
+        api = {"1": {"class_type": "LoadImage", "inputs": {"image": "a.png"}},
+               "2": {"class_type": "SaveImage",
+                     "inputs": {"images": ["1", 0]}}}
+        g = livewall.api_to_graph(api, defs)
+        save = [n for n in g["nodes"] if n["type"] == "SaveImage"][0]
+        self.assertEqual(save["inputs"][0]["name"], "images")
+        self.assertEqual(save["inputs"][0]["link"], 1)
+        self.assertEqual(save["widgets_values"], ["ComfyUI"])
+        load = [n for n in g["nodes"] if n["type"] == "LoadImage"][0]
+        self.assertEqual(load["widgets_values"], ["a.png", "image"])
+
+    def test_meta_embeds_a_configured_graph_verbatim(self):
+        graph = {"nodes": [{"id": 1, "type": "LoadImage"}], "links": [],
+                 "version": 0.4}
+        meta = livewall.workflow_meta(json.dumps(graph), {}, "http://x:1")
+        self.assertEqual(meta, graph)
+
+    def test_meta_synthesizes_for_an_api_workflow(self):
+        # unreachable server -> definition-less synthesis, still a graph
+        meta = livewall.workflow_meta("", self.API, "http://127.0.0.1:1")
+        self.assertEqual(meta["version"], 0.4)
+        self.assertEqual(len(meta["nodes"]), 4)
+
+
 class TestWorkflowValidation(LiveWallFixture):
     def _api_wf(self, **extra):
         wf = {"1": {"class_type": "LoadImage", "inputs": {"image": "h.jpg"}},

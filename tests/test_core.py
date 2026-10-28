@@ -1384,6 +1384,36 @@ class TestComfyWorkflow(unittest.TestCase):
             '{"1": {"class_type": "SaveImage", "inputs": {}}}')
         self.assertIn("LoadImage", err)
 
+    def test_graph_save_accepted(self):
+        # a normal ComfyUI "Workflow -> Save" JSON works for upscaling too,
+        # not just the Dev-Mode Export-API form
+        graph = {
+            "last_node_id": 3, "last_link_id": 1,
+            "nodes": [
+                {"id": 1, "type": "LoadImage", "pos": [0, 0],
+                 "size": [300, 300], "flags": {}, "order": 0, "mode": 0,
+                 "inputs": [], "outputs": [], "properties": {},
+                 "widgets_values": ["hero.png", "image"],
+                 "widgets_values_named": {"image": "hero.png",
+                                          "upload": "image"}},
+                {"id": 3, "type": "SaveImage", "pos": [0, 0],
+                 "size": [300, 300], "flags": {}, "order": 1, "mode": 0,
+                 "inputs": [{"name": "images", "type": "IMAGE",
+                              "link": 1}],
+                 "outputs": [], "properties": {},
+                 "widgets_values": ["out"],
+                 "widgets_values_named": {"filename_prefix": "out"}},
+            ],
+            "links": [[1, 1, 0, 3, 0, "IMAGE"]],
+            "groups": [], "config": {}, "extra": {}, "version": 0.4,
+        }
+        wf, err = upscale.validate_workflow(json.dumps(graph))
+        self.assertIsNone(err, err)
+        types = {n["class_type"] for n in wf.values()}
+        self.assertIn("LoadImage", types)
+        self.assertIn("SaveImage", types)
+        self.assertEqual(wf["3"]["inputs"]["images"], ["1", 0])
+
     def test_fill_workflow_nested_lists_and_scalars(self):
         wf = {"1": {"inputs": {"text": "{game} — {mood}", "seed": 20},
                     "class_type": "CLIPTextEncode"},

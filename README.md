@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.11.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.11.1-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -478,13 +478,19 @@ Prefer spending GPU cycles over credits? Set the upscaling provider to
 install:
 
 1. In ComfyUI Desktop: **Settings → Dev Mode → Export API** — this copies
-   your workflow as API JSON.
+   your workflow as API JSON. A normal **Workflow → Save** JSON works too
+   (both formats are accepted here, same as the Live wallpaper node).
 2. Paste that JSON into the **ComfyUI workflow** field in the config UI
    (or leave it empty to use the built-in default: *Ultimate SD Upscale*
    with SDXL + 4x-UltraSharp — install those models in ComfyUI first).
 3. Set the **host/port** (default `127.0.0.1:8188`) and hit **Test** — it
    checks connectivity and that the workflow has the required `LoadImage` /
    `SaveImage` nodes, **without submitting any GPU work**.
+4. **Every job stays editable.** Each submission carries a real workflow
+   graph in ComfyUI's history metadata, so **Open as workflow in a new tab**
+   restores it — your own graph (with your layout) when you pasted a
+   `Workflow → Save` JSON, or an auto-laid-out graph synthesized from the
+   executed job when you pasted Export-API JSON.
 
 Details:
 
@@ -714,7 +720,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 242 tests
+python -m unittest discover -s tests -v   # 250 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -760,6 +766,15 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.11.1** — **editable jobs in ComfyUI's history**: every job the app
+  submits now carries a real *graph* in `extra_data.extra_pnginfo.workflow`,
+  so "Open as workflow in a new tab" actually restores the workflow. (An
+  API-format blob in that field fails ComfyUI's graph validator **and**
+  disables its API-prompt fallback, so the action used to silently open
+  nothing.) A configured `Workflow → Save` JSON is embedded verbatim; an
+  Export-API job is synthesized into a graph using ComfyUI's `/object_info`
+  for correct input slots and widget values. The Upscaling node now also
+  accepts a normal `Workflow → Save` JSON, like the Live wallpaper node.
 - **1.11.0** — a hardening + UX pass:
   - **Background processing control** (Library tab): pause/resume/clear the
     deferred upscale + video drain while it works through the queue.

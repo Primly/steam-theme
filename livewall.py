@@ -12,6 +12,12 @@ Workflow formats accepted:
     subgraphs) — flattened to API form automatically, so a normal
   workflow save pastes straight in.
 
+Every submitted job also carries an editable *graph* in ComfyUI's history
+metadata (extra_data.extra_pnginfo.workflow): a configured graph save is
+embedded verbatim, while API-format workflows are synthesized into a graph
+(api_to_graph, using /object_info for slot order) — so "Open as workflow in
+a new tab" always has a real graph to restore.
+
 {placeholders} from the AI/VLM node ({game}, {mood}, {theme_name},
 {appearance}, {palette_mode}, {role} plus custom naming-prompt keys) are
 filled into every workflow string, JSON-safely, exactly like the upscaling
@@ -32,6 +38,7 @@ import os
 import subprocess
 import threading
 import time
+import uuid
 
 import requests
 
@@ -371,6 +378,281 @@ def validate_workflow(text):
     return api, err
 
 
+# ------------------------------------------------------- graph synthesis
+
+_OBJECT_INFO_CACHE = {}   # server URL -> (fetched_at, node definitions)
+_OBJECT_INFO_TTL = 600
+_WIDGET_TYPES = {"INT", "FLOAT", "STRING", "BOOLEAN", "COMBO"}
+
+
+def fetch_object_info(base, timeout=20):
+    """ComfyUI's node definitions (/object_info): input order, slot types and
+    widget defaults. Used to synthesize a faithful graph from an API prompt.
+    Cached per server for 10 minutes; returns {} when unavailable (synthesis
+    still works, just with less precise slot ordering)."""
+    cached = _OBJECT_INFO_CACHE.get(base)
+    now = time.time()
+    if cached and now - cached[0] < _OBJECT_INFO_TTL:
+        return cached[1]
+    try:
+        r = requests.get(base + "/object_info", timeout=timeout)
+        if r.status_code == 200 and isinstance(r.json(), dict):
+            _OBJECT_INFO_CACHE[base] = (now, r.json())
+            return _OBJECT_INFO_CACHE[base][1]
+    except Exception:
+        pass
+    return cached[1] if cached else {}
+
+
+def _input_specs(defs, class_type):
+    """[(name, slot_type, opts, is_widget, raw_type)] in definition order."""
+    info = (defs or {}).get(class_type) or {}
+    inp = info.get("input") or {}
+    specs = []
+    for section in ("required", "optional"):
+        for name, spec in (inp.get(section) or {}).items():
+            raw = spec[0] if isinstance(spec, (list, tuple)) and spec else "*"
+            opts = (spec[1] if isinstance(spec, (list, tuple)) and len(spec) > 1
+                    else {})
+            if not isinstance(opts, dict):
+                opts = {}
+            if opts.get("forceInput"):
+                widget = False
+            elif isinstance(raw, list):
+                widget = True
+            else:
+                t = str(raw).upper()
+                # newer ComfyUI "dynamic combo" inputs (e.g.
+                # COMFY_DYNAMICCOMBO_V3) behave like widgets
+                widget = t in _WIDGET_TYPES or "DYNAMICCOMBO" in t
+            slot_type = raw if isinstance(raw, str) else "COMBO"
+            specs.append((name, slot_type, opts, widget, raw))
+    return specs
+
+
+def _typed_default(raw_type):
+    """A safe non-null widget default for a ComfyUI input type."""
+    if isinstance(raw_type, list):
+        return raw_type[0] if raw_type else ""
+    t = str(raw_type).upper()
+    if t == "INT":
+        return 0
+    if t == "FLOAT":
+        return 0.0
+    if t == "BOOLEAN":
+        return False
+    return ""
+
+
+def _widget_value(has_val, val, raw_type, opts):
+    """Resolve one widget value, never yielding None (the graph schema
+    rejects null widget values)."""
+    if has_val and val is not None:
+        return val
+    if "default" in opts and opts["default"] is not None:
+        return opts["default"]
+    return _typed_default(raw_type)
+
+
+def _is_ref(val, api):
+    """API value is a link: [source_node, output_slot]."""
+    return (isinstance(val, list) and len(val) == 2
+            and not isinstance(val[1], (list, dict))
+            and str(val[0]) in api)
+
+
+def _map_ids(api):
+    """Graph node ids: numeric strings -> ints, 'group:node' -> 'group_node'
+    (deduped) — mirroring ComfyUI's own API-JSON loader."""
+    ids, used = {}, {k for k in api if ":" not in str(k)}
+    for raw in api:
+        s = str(raw)
+        if ":" not in s:
+            ids[raw] = int(s) if s.lstrip("-").isdigit() else s
+            continue
+        cand = s.replace(":", "_")
+        while cand in used:
+            cand += "_"
+        used.add(cand)
+        ids[raw] = cand
+    return ids
+
+
+def api_to_graph(api, defs=None):
+    """Turn a flat Export-API prompt into a ComfyUI graph-format save
+    (nodes/links/version) so a submitted job can be opened as an editable
+    workflow from ComfyUI's history.
+
+    Node definitions (/object_info, optional) give exact input order, slot
+    types and widget defaults; without them, linked values become input
+    slots in API order and the rest become widget values."""
+    if not isinstance(api, dict) or not api:
+        return None
+    defs = defs if isinstance(defs, dict) else {}
+    ids = _map_ids(api)
+    nodes = {}
+    for raw, node in api.items():
+        if not isinstance(node, dict):
+            continue
+        ct = str(node.get("class_type") or "")
+        vals = node.get("inputs") or {}
+        specs = _input_specs(defs, ct)
+        inputs, widgets, named, consumed = [], [], {}, set()
+        if specs:
+            for name, slot_type, opts, widget, raw_type in specs:
+                val = vals.get(name)
+                present = name in vals
+                if _is_ref(val, api):
+                    inputs.append({"name": name, "type": slot_type,
+                                   "link": None})
+                elif widget or present:
+                    # a scalar value in the API means a widget input — even
+                    # for types we don't classify as widgets (never drop it)
+                    w = _widget_value(present, val, raw_type, opts)
+                    widgets.append(w)
+                    named[name] = w
+                else:
+                    inputs.append({"name": name, "type": slot_type,
+                                   "link": None})
+                consumed.add(name)
+            extra = [(k, v) for k, v in vals.items() if k not in consumed]
+        else:
+            extra = list(vals.items())
+        for name, val in extra:
+            if _is_ref(val, api):
+                inputs.append({"name": str(name), "type": "*", "link": None})
+            else:
+                widgets.append("" if val is None else val)
+                named[str(name)] = widgets[-1]
+        outs = []
+        info = defs.get(ct) or {}
+        out_types = info.get("output") or []
+        out_names = info.get("output_name") or []
+        for i, t in enumerate(out_types):
+            nm = out_names[i] if i < len(out_names) else f"output_{i}"
+            outs.append({"name": str(nm),
+                         "type": t if isinstance(t, str) else "COMBO",
+                         "links": [], "slot_index": i})
+        gnode = {
+            "id": ids[raw],
+            "type": ct,
+            "pos": [0, 0],
+            "size": [315, max(80, 60 + 24 * len(widgets))],
+            "flags": {},
+            "order": 0,
+            "mode": 0,
+            "inputs": inputs,
+            "outputs": outs,
+            "properties": {"Node name for S&R": ct} if ct else {},
+            "widgets_values": widgets,
+        }
+        if named:
+            # newer ComfyUI saves carry named widget values too; the
+            # flattener (graph_to_api) prefers them, so keep both in sync
+            gnode["widgets_values_named"] = named
+        title = (node.get("_meta") or {}).get("title")
+        if title:
+            gnode["title"] = str(title)
+        nodes[raw] = gnode
+
+    # links — target_slot indexes the node's synthesized inputs[] array
+    links = []
+    for raw, node in api.items():
+        gnode = nodes.get(raw)
+        if not gnode:
+            continue
+        vals = node.get("inputs") or {}
+        for slot, inp in enumerate(gnode["inputs"]):
+            val = vals.get(inp["name"])
+            if not _is_ref(val, api):
+                continue
+            src = nodes.get(str(val[0]))
+            if not src:
+                continue
+            src_slot = int(val[1]) if isinstance(val[1], (int, float)) else 0
+            lid = len(links) + 1
+            links.append([lid, src["id"], src_slot, gnode["id"], slot,
+                          inp["type"]])
+            inp["link"] = lid
+            while len(src["outputs"]) <= src_slot:
+                src["outputs"].append(
+                    {"name": f"output_{len(src['outputs'])}",
+                     "type": inp["type"], "links": [],
+                     "slot_index": len(src["outputs"])})
+            src["outputs"][src_slot].setdefault("links", []).append(lid)
+
+    # dependency order (sources first) + a readable auto-layout
+    deps = {}
+    for raw, node in api.items():
+        if raw in nodes:
+            deps[raw] = {str(v[0])
+                         for v in (node.get("inputs") or {}).values()
+                         if _is_ref(v, api) and str(v[0]) in nodes}
+    order, seen = [], set()
+
+    def visit(k, stack):
+        if k in seen or k in stack:
+            return
+        stack.add(k)
+        for dep in deps.get(k, ()):
+            visit(dep, stack)
+        stack.discard(k)
+        if k not in seen:
+            seen.add(k)
+            order.append(k)
+
+    for k in nodes:
+        visit(k, set())
+
+    depth = {}
+
+    def level(k):
+        if k not in depth:
+            depth[k] = max([level(d) + 1 for d in deps.get(k, ())] or [0])
+        return depth[k]
+
+    rows = {}
+    for i, k in enumerate(order):
+        nodes[k]["order"] = i
+        col = level(k)
+        row = rows.get(col, 0)
+        rows[col] = row + 1
+        nodes[k]["pos"] = [40 + col * 380, 40 + row * 240]
+
+    int_ids = [n["id"] for n in nodes.values() if isinstance(n["id"], int)]
+    return {
+        "id": str(uuid.uuid4()),
+        "revision": 0,
+        "last_node_id": max(int_ids) if int_ids else len(nodes),
+        "last_link_id": len(links),
+        "nodes": list(nodes.values()),
+        "links": links,
+        "groups": [],
+        "config": {},
+        "extra": {},
+        "version": 0.4,
+    }
+
+
+def workflow_meta(configured_text, api, base):
+    """The editable workflow to stash in extra_data.extra_pnginfo.workflow.
+
+    ComfyUI's history action ("Open as workflow in a new tab") only accepts a
+    *valid graph* in that field and silently opens nothing otherwise — an
+    API-format blob there is worse than omitting it. So: a graph save the
+    user configured is embedded verbatim (their own layout), anything else
+    is synthesized into a graph from the API prompt that will actually run."""
+    text = (configured_text or "").strip()
+    if text:
+        try:
+            obj = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            obj = None
+        if isinstance(obj, dict) and isinstance(obj.get("nodes"), list):
+            return obj
+    return api_to_graph(api, fetch_object_info(base))
+
+
 # ---------------------------------------------------------------- queue
 
 def _queue_file(cfg):
@@ -611,17 +893,15 @@ def generate(cfg, hero_path, dst, context, log=print, defer=True):
         if dropped:
             log(f"  [livewall] unknown workflow placeholders ignored: "
                 f"{', '.join(sorted(set(dropped)))}")
-        # 4) submit + poll (include the editable workflow so history's
-        #    "Open as workflow in a new tab" can restore the graph)
+        # 4) submit + poll — stash a *valid graph* in extra_pnginfo.workflow
+        #    so history's "Open as workflow in a new tab" can restore it
+        #    (ComfyUI ignores API-format blobs there and opens nothing)
         payload = {"prompt": api}
         try:
-            raw_for_meta = (lw.get("workflow") or "").strip()
-            if not raw_for_meta:
-                raw_for_meta = default_workflow()
-            meta_obj = json.loads(raw_for_meta)
-            if isinstance(meta_obj, dict):
+            meta_obj = workflow_meta(lw.get("workflow"), api, base)
+            if meta_obj:
                 payload["extra_data"] = {"extra_pnginfo": {"workflow": meta_obj}}
-        except (json.JSONDecodeError, OSError):
+        except Exception:
             pass
         r = requests.post(base + "/prompt", timeout=60, json=payload)
         if r.status_code != 200:

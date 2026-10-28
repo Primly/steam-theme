@@ -4,7 +4,7 @@ This document explains how the app works, maps every module, and records the
 decisions and recent changes so another engineer (or another agent in a
 different harness) can pick up and keep improving it with minimal ramp-up.
 
-Current version: **1.11.0**
+Current version: **1.11.1**
 
 ---
 
@@ -158,8 +158,12 @@ forced.
   and a JSON manifest (`theme.json`) + `slideshow.json`.
 
 ### `upscale.py`
-- Providers: `topaz` (cloud, credits), `comfy` (local Export-API workflow),
+- Providers: `topaz` (cloud, credits), `comfy` (local ComfyUI workflow —
+  Export-API JSON **or** a graph save, flattened via `livewall.graph_to_api`),
   `ai` (OpenAI-compatible `/images/edits`, best-effort).
+- Submissions carry a real workflow *graph* in
+  `extra_data.extra_pnginfo.workflow` (`livewall.workflow_meta`), so ComfyUI's
+  history "Open as workflow in a new tab" can restore it.
 - `cache_path` encodes provider/model so switching models re-generates;
   `find_existing_upscale` (glob `<base>_upscaled_*.png`) makes the "already
   upscaled" check **provider-agnostic**.
@@ -175,6 +179,13 @@ forced.
 - Accepts both the classic Export-API JSON **and** the new ComfyUI graph/save
   format (`graph_to_api`, incl. subgraph flattening), and auto-repairs unquoted
   `{placeholder}` tokens (`repair_json`).
+- The inverse, `api_to_graph`, synthesizes a graph-format save from a flat API
+  prompt (using `/object_info` for input slot order, types and widget defaults,
+  cached 10 min) so every submitted job carries a restorable graph.
+  `workflow_meta` picks a configured graph verbatim, else the synthesized one.
+  ComfyUI's history action only accepts a *valid graph* in
+  `extra_data.extra_pnginfo.workflow` — an API-format blob fails its zod
+  validator **and** suppresses the API-prompt fallback.
 - Videos are expensive, so `maybe_generate` only *queues* (`video_queue.json`);
   a single-flight `start_drain` worker renders one at a time, gated on gaming +
   ComfyUI availability.
@@ -256,7 +267,7 @@ app directory by `save_config` + `cfg_path` / `safe_join`.
 
 ## 8. Testing
 
-- `python -m unittest discover -s tests` (stdlib only; ~242 tests).
+- `python -m unittest discover -s tests` (stdlib only; ~250 tests).
 - Covers path sandboxing, palette math, Steam parsing, art caching, the
   regenerate/upscale passes, live-wallpaper graph conversion, and the web UI
   (incl. the local-only guard).
@@ -343,3 +354,22 @@ No behavior changed; all fixes are defensive.
   the video prompt is now driven by the `{loop_prompt}` placeholder (the VLM
   authors each clip's ambient motion). The live-wallpaper conversion tests
   were reconciled to the new format.
+
+### 1.11.1 — editable ComfyUI jobs
+
+- **Root cause found**: ComfyUI's history "Open as workflow in a new tab" reads
+  `extra_data.extra_pnginfo.workflow` and requires a **valid graph** (zod schema:
+  numeric `version`, `nodes[]`, `last_node_id`, `last_link_id`, `links[]`).
+  The previous code embedded the *Export-API* dict there; that fails validation,
+  and because the field is non-null ComfyUI's `extractApiPrompt` fallback is
+  disabled too — so the action silently opened nothing.
+- **Fix**: `livewall.api_to_graph()` synthesizes a schema-valid graph (real node
+  defs from `/object_info` for slot order/widget values; topology + auto-layout
+  computed locally). `livewall.workflow_meta()` embeds a configured graph save
+  verbatim, else the synthesized graph. Both `upscale._comfy` and the
+  live-wallpaper submit use it.
+- **Upscaling accepts graph saves** now too (`upscale.validate_workflow` runs
+  `livewall.graph_to_api`), matching the video node.
+- Verified against the live ComfyUI instance: a 14-node Ultimate-SD-Upscale
+  job round-trips through `api_to_graph` → `graph_to_api` with identical
+  class types, link topology and widget values (0 diffs).

@@ -503,13 +503,23 @@ def _unload_comfy_models(cfg, base, log=print):
 
 
 def validate_workflow(text):
-    """Validate an Export-API workflow string for upscaling duty. Empty text
-    means the built-in default. Returns (parsed_dict_or_None, error_or_None).
+    """Validate a workflow string for upscaling duty. Accepts an Export-API
+    JSON object OR a ComfyUI graph-format save (flattened with livewall's
+    graph converter). Empty text means the built-in default. Returns
+    (parsed_api_dict_or_None, error_or_None).
     """
     try:
         wf = json.loads((text or "").strip() or DEFAULT_COMFY_WORKFLOW)
     except json.JSONDecodeError as e:
         return None, f"invalid JSON: {e}"
+    if isinstance(wf, dict) and isinstance(wf.get("nodes"), list):
+        # a normal ComfyUI save (Workflow -> Save) — same formats the
+        # live-wallpaper node accepts
+        import livewall
+        api, errs = livewall.graph_to_api(wf)
+        if not api or errs:
+            return None, "graph conversion failed: " + "; ".join(errs[:3])
+        wf = api
     if not isinstance(wf, dict) or not wf:
         return None, "workflow must be a JSON object of nodes"
     types = {n.get("class_type") for n in wf.values() if isinstance(n, dict)}
@@ -751,16 +761,16 @@ def _comfy(src, dst, cfg, log, target_w, target_h, context=None,
         if dropped:
             log(f"  [up] unknown workflow placeholders ignored: "
                 f"{', '.join(sorted(set(dropped)))}")
-        # include editable workflow so "Open as workflow in new tab" works
+        # include an editable *graph* workflow so history's "Open as
+        # workflow in a new tab" works (a configured graph save is embedded
+        # verbatim; anything else is synthesized from the executed prompt)
         payload = {"prompt": wf}
         try:
-            raw_wf = _workflow_text(c, role)
-            if not raw_wf:
-                raw_wf = DEFAULT_COMFY_WORKFLOW
-            meta = json.loads(raw_wf)
-            if isinstance(meta, dict):
+            import livewall
+            meta = livewall.workflow_meta(_workflow_text(c, role), wf, base)
+            if meta:
                 payload["extra_data"] = {"extra_pnginfo": {"workflow": meta}}
-        except (json.JSONDecodeError, OSError):
+        except Exception:
             pass
         r = requests.post(base + "/prompt", timeout=60, json=payload)
         if r.status_code != 200:
