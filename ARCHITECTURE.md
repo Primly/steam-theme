@@ -4,7 +4,7 @@ This document explains how the app works, maps every module, and records the
 decisions and recent changes so another engineer (or another agent in a
 different harness) can pick up and keep improving it with minimal ramp-up.
 
-Current version: **1.12.1**
+Current version: **1.12.2**
 
 ---
 
@@ -279,7 +279,7 @@ app directory by `save_config` + `cfg_path` / `safe_join`.
 
 ## 8. Testing
 
-- `python -m unittest discover -s tests` (stdlib only; ~262 tests).
+- `python -m unittest discover -s tests` (stdlib only; ~266 tests).
 - Covers path sandboxing, palette math, Steam parsing, art caching, the
   regenerate/upscale passes, live-wallpaper graph conversion, and the web UI
   (incl. the local-only guard).
@@ -415,3 +415,14 @@ No behavior changed; all fixes are defensive.
   definitive when ComfyUI is localhost (both installs visible), conditional
   otherwise. `validate_workflow(text, topaz_finish=)` keeps the check honest
   when Topaz finishing is off.
+
+### 1.12.2 — random video seeds
+
+- ComfyUI's "randomize" is a frontend widget; graph saves and Export-API JSON
+  both carry a fixed `noise_seed`, so every submitted clip was identical.
+- `livewall.randomize_seeds(api)` rewrites plain `seed` / `noise_seed` inputs
+  with a fresh 50-bit value in `generate()` (toggle `livewall.randomize_seed`,
+  default on) and logs them for reproduction. Links and dotted sub-keys are
+  untouched. Note: the history graph keeps the workflow's TEMPLATE seed —
+  reproduce a clip from the logged value (or turn the toggle off to pin the
+  workflow's own seed).

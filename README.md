@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.12.1-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.12.2-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -332,7 +332,7 @@ UI takes effect without restarts.
 | `topaz.api_key` / `model` / `creativity` / `prompt` / `models` | — | Topaz settings; `models.hero/logo/icon` override per role |
 | `comfy.host` / `port` / `workflow` / `workflows` / `defer_while_gaming` / `timeout_seconds` / `unload_models_after` | `127.0.0.1` / `8188` / built-in / — / `true` / `900` / `true` | Local ComfyUI upscaling; `workflow` = Export-API JSON (empty = built-in Ultimate SD Upscale default); `workflows.hero/logo/icon` override per role; jobs defer to a queue while a game runs; `unload_models_after` frees models from RAM/VRAM after each generation |
 | `ai.upscale_model` | `ai.model` | Model for the `ai` images provider |
-| `livewall.enabled` / `provider` / `host` / `port` / `workflow` / `all_heroes` / `topaz_finish` / `defer_while_gaming` / `timeout_seconds` / `we_monitor` | `false` / `comfy` / `127.0.0.1` / `8188` / built-in / `true` / `true` / `true` / `3600` / `-1` | Looping-video wallpaper: ComfyUI video workflow (empty = built-in LTX-2.5 default; graph saves accepted), one clip per hero candidate (`all_heroes`: every candidate, rotated on the theme interval; off = only the hero currently displayed gets a clip), queued while gaming; `we_monitor` -1 = hero display, else a WE monitor index; `topaz_finish` runs the local Topaz Video AI ×2 upscale + `apf-2` interpolation (off = raw diffusion video, no local Topaz license needed) |
+| `livewall.enabled` / `provider` / `host` / `port` / `workflow` / `all_heroes` / `topaz_finish` / `randomize_seed` / `defer_while_gaming` / `timeout_seconds` / `we_monitor` | `false` / `comfy` / `127.0.0.1` / `8188` / built-in / `true` / `true` / `true` / `true` / `3600` / `-1` | Looping-video wallpaper: ComfyUI video workflow (empty = built-in LTX-2.5 default; graph saves accepted), one clip per hero candidate (`all_heroes`: every candidate, rotated on the theme interval; off = only the hero currently displayed gets a clip), queued while gaming; `we_monitor` -1 = hero display, else a WE monitor index; `topaz_finish` runs the local Topaz Video AI ×2 upscale + `apf-2` interpolation (off = raw diffusion video, no local Topaz license needed); `randomize_seed` rolls a fresh `seed`/`noise_seed` per clip (off = reuse the workflow's fixed seed) |
 | `signalrgb.*` (Windows) | — | `enabled`, `base_url`, `custom_effect`, `effect_style`, `effect_scope` (`per_game`/`single`), `effects_dir`, `fallback_effect` |
 | `windows_terminal.*` (Windows) | — | `enabled`, `set_background_image`, `background_opacity` |
 | `konsole.*` (Linux) | — | `enabled`, `set_default_profile` |
@@ -552,6 +552,14 @@ display:
   image, so the first and last frames match. The **original** art is sent —
   never the upscale — since video diffusion downsamples to the workflow's
   output size anyway and a 5120 px upload is pure wait.
+- **A fresh seed per clip** (default on): ComfyUI's "randomize" seed control
+  is frontend-only, so the number saved in your workflow would be sent with
+  every job and every clip would come out identical. The app rolls a new
+  `seed` / `noise_seed` for each submission and logs it
+  (`[livewall] random seed: noise_seed=412938475610`) so you can reproduce a
+  good one. Linked seed inputs and dotted sub-keys like `sampling_mode.seed`
+  are left untouched. Untick *Randomize the noise seed* to keep the workflow's
+  fixed value.
 - **Defer while gaming** (default on): generation queues while a game runs
   and drains when you stop — one video takes minutes of GPU, so it never
   fights your game for it.
@@ -738,7 +746,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 262 tests
+python -m unittest discover -s tests -v   # 266 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -785,6 +793,12 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.12.2** — **random seeds for video**: ComfyUI's "randomize" seed control is
+  frontend-only, so the fixed `noise_seed` saved in the workflow was sent with
+  every job and every clip came out identical. The app now rolls a fresh
+  `seed` / `noise_seed` per submission (new *Randomize the noise seed* toggle,
+  default on) and logs it so a good clip can be reproduced. Linked seed inputs
+  and dotted sub-keys (`sampling_mode.seed`) are left alone.
 - **1.12.1** — **legacy-Topaz guard**: the `TopazVideoAI` node resolves models
   itself and always prefers the newer `…\Topaz Video\models` folder, so an
   ffmpeg from the old `Topaz Video AI` install can't read them — the job dies

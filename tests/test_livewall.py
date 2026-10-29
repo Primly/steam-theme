@@ -221,6 +221,46 @@ class TestGraphSynthesis(unittest.TestCase):
         self.assertEqual(len(meta["nodes"]), 4)
 
 
+class TestSeedRandomization(unittest.TestCase):
+    """ComfyUI's "randomize" seed control lives in the frontend — an API
+    submission carries whatever number the workflow was saved with."""
+
+    def test_plain_seeds_replaced_links_and_dotted_keys_kept(self):
+        api = {"1": {"class_type": "RandomNoise",
+                     "inputs": {"noise_seed": 42}},
+               "2": {"class_type": "KSampler",
+                     "inputs": {"seed": 7, "steps": 20, "model": ["9", 0]}},
+               "3": {"class_type": "X", "inputs": {"noise_seed": ["1", 0]}},
+               "4": {"class_type": "Y",
+                     "inputs": {"sampling_mode.seed": 0}}}
+
+        class Rng:
+            def __init__(self):
+                self.values = iter([111, 222])
+
+            def randrange(self, a, b):
+                return next(self.values)
+
+        changed = livewall.randomize_seeds(api, Rng())
+        self.assertEqual(api["1"]["inputs"]["noise_seed"], 111)
+        self.assertEqual(api["2"]["inputs"]["seed"], 222)
+        self.assertEqual(api["2"]["inputs"]["steps"], 20)
+        self.assertEqual(api["2"]["inputs"]["model"], ["9", 0])
+        self.assertEqual(api["3"]["inputs"]["noise_seed"], ["1", 0])
+        self.assertEqual(api["4"]["inputs"]["sampling_mode.seed"], 0)
+        self.assertEqual(sorted(changed),
+                         [("1", "noise_seed", 111), ("2", "seed", 222)])
+
+    def test_seed_within_js_safe_range(self):
+        api = {"1": {"class_type": "KSampler", "inputs": {"seed": 1}}}
+        changed = livewall.randomize_seeds(api)
+        seed = api["1"]["inputs"]["seed"]
+        self.assertIsInstance(seed, int)
+        self.assertGreaterEqual(seed, 0)
+        self.assertLess(seed, 2 ** 50)
+        self.assertEqual(changed[0][0], "1")
+
+
 class TestTopazPathWarning(unittest.TestCase):
     """The TopazVideoAI node always loads models from the NEWER
     '<base>\\Topaz Video\\models' folder, so an ffmpeg from the legacy
@@ -502,6 +542,16 @@ class TestLiveWallSubmit(LiveWallFixture):
                                                       "fps": 24}},
         "4": {"class_type": "SaveVideo", "inputs": {"video": ["3", 0]}}})
 
+    # same shape, plus a sampler seed and a linked `noise_seed`
+    SEED_WF = json.dumps({
+        "1": {"class_type": "LoadImage", "inputs": {"image": "h.jpg"}},
+        "2": {"class_type": "RandomNoise", "inputs": {"noise_seed": 123456}},
+        "3": {"class_type": "FramesNode",
+              "inputs": {"image": ["1", 0], "noise_seed": ["2", 0]}},
+        "4": {"class_type": "CreateVideo",
+              "inputs": {"images": ["3", 0], "fps": 24}},
+        "5": {"class_type": "SaveVideo", "inputs": {"video": ["4", 0]}}})
+
     def setUp(self):
         super().setUp()
         self.cfg["livewall"]["workflow"] = self.WF
@@ -558,6 +608,37 @@ class TestLiveWallSubmit(LiveWallFixture):
         # SaveVideo got our filename prefix
         self.assertTrue(self.submitted["4"]["inputs"]["filename_prefix"]
                         .startswith("steamtheme/"))
+
+    def _run_seeded(self, name):
+        import requests as real_requests
+        with mock.patch.object(livewall, "requests") as rq, \
+                mock.patch.object(livewall.time, "sleep"):
+            rq.RequestException = real_requests.RequestException
+            rq.get.side_effect = self._get
+            rq.post.side_effect = self._post
+            out = livewall.generate(self.cfg, self.hero,
+                                    os.path.join(self.dir, name), {},
+                                    lambda m: None)
+        self.assertEqual(out, os.path.join(self.dir, name))
+        return self.submitted
+
+    def test_seed_is_randomized_per_submit(self):
+        self.cfg["livewall"]["workflow"] = self.SEED_WF
+        self.cfg["livewall"]["randomize_seed"] = True
+        first = self._run_seeded("a.mp4")["2"]["inputs"]["noise_seed"]
+        second = self._run_seeded("b.mp4")["2"]["inputs"]["noise_seed"]
+        self.assertNotEqual(first, 123456)
+        self.assertNotEqual(second, 123456)
+        self.assertNotEqual(first, second)
+        # a linked seed input must stay a link
+        self.assertEqual(self.submitted["3"]["inputs"]["noise_seed"],
+                         ["2", 0])
+
+    def test_seed_kept_when_randomize_is_off(self):
+        self.cfg["livewall"]["workflow"] = self.SEED_WF
+        self.cfg["livewall"]["randomize_seed"] = False
+        submitted = self._run_seeded("c.mp4")
+        self.assertEqual(submitted["2"]["inputs"]["noise_seed"], 123456)
 
 
 class TestWallpaperEngine(LiveWallFixture):

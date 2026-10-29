@@ -35,6 +35,7 @@ import glob
 import hashlib
 import json
 import os
+import random
 import subprocess
 import threading
 import time
@@ -811,6 +812,33 @@ def _hero_device(cfg):
 
 _TOPAZ_INSTALL_BASE = r"C:\Program Files\Topaz Labs LLC"
 
+_SEED_INPUTS = ("seed", "noise_seed")
+
+
+def randomize_seeds(api, rng=None):
+    """Give every sampler a fresh random seed, in place.
+
+    ComfyUI's "randomize" control is a frontend-only widget: the value stored
+    in the saved workflow (and therefore in every API submission) is a fixed
+    number, so each render is identical. Rewrites plain `seed` / `noise_seed`
+    inputs — linked values and dotted sub-keys (e.g. `sampling_mode.seed`)
+    are left alone. Returns [(node_id, input_name, value), ...]."""
+    rnd = rng or random
+    changed = []
+    for nid, node in (api or {}).items():
+        if not isinstance(node, dict):
+            continue
+        inputs = node.get("inputs")
+        if not isinstance(inputs, dict):
+            continue
+        for key in _SEED_INPUTS:
+            if key not in inputs or isinstance(inputs[key], (list, dict)):
+                continue
+            seed = rnd.randrange(0, 2 ** 50)
+            inputs[key] = seed
+            changed.append((nid, key, seed))
+    return changed
+
 
 def topaz_path_warning(api, base=""):
     """Warn when a workflow's TopazVideoAI node uses the LEGACY install.
@@ -933,6 +961,13 @@ def generate(cfg, hero_path, dst, context, log=print, defer=True):
         if dropped:
             log(f"  [livewall] unknown workflow placeholders ignored: "
                 f"{', '.join(sorted(set(dropped)))}")
+        # 3b) fresh noise seed per clip — the saved workflow carries a fixed
+        #     number, so without this every render would be identical
+        if lw.get("randomize_seed", True):
+            seeds = randomize_seeds(api)
+            if seeds:
+                log("  [livewall] random seed: "
+                    + ", ".join(f"{k}={v}" for _, k, v in seeds))
         # 4) submit + poll — stash a *valid graph* in extra_pnginfo.workflow
         #    so history's "Open as workflow in a new tab" can restore it
         #    (ComfyUI ignores API-format blobs there and opens nothing)

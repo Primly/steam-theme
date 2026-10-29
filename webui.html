@@ -476,6 +476,9 @@
     <div class="switch"><input type="checkbox" id="lwTopazFinish"><span>Topaz finish (local Topaz Video AI ×2 upscale + frame interpolation)</span></div>
   </div>
   <div class="row">
+    <div class="switch"><input type="checkbox" id="lwRandomSeed" checked><span>Randomize the noise seed for every video (otherwise every clip comes out identical)</span></div>
+  </div>
+  <div class="row">
     <div class="switch"><input type="checkbox" id="lwDefer"><span>While a game is running, queue the video and generate it when you stop playing</span></div>
   </div>
   <div class="row">
@@ -874,6 +877,7 @@ async function load() {
   setV("lwWorkflow", lw.workflow || "");
   setC("lwAllHeroes", lw.all_heroes !== false);
   setC("lwTopazFinish", lw.topaz_finish !== false);
+  setC("lwRandomSeed", lw.randomize_seed !== false);
   setC("lwDefer", lw.defer_while_gaming !== false);
   setV("lwTimeout", lw.timeout_seconds ?? 3600);
   setV("lwMonitor", String(lw.we_monitor ?? -1));
@@ -961,6 +965,7 @@ async function save(apply) {
                   port: Math.min(65535, Math.max(1, parseInt(v("lwPort")) || 8188)),
                   all_heroes: document.getElementById("lwAllHeroes").checked,
                   topaz_finish: document.getElementById("lwTopazFinish").checked,
+                  randomize_seed: document.getElementById("lwRandomSeed").checked,
                   defer_while_gaming: document.getElementById("lwDefer").checked,
                   timeout_seconds: Math.min(21600, Math.max(60, parseInt(v("lwTimeout")) || 3600))};
   const lwm = parseInt(v("lwMonitor"));
