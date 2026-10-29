@@ -343,6 +343,41 @@ class TestManualThemeHold(unittest.TestCase):
         self.assertEqual(state["manual_hold"]["identity"], "440")
         self.assertEqual(state["last_identity"], "440")
 
+    def test_hero_pick_targets_its_theme_when_detection_is_excluded(self):
+        # Wallpaper Engine is last-played AND excluded: the old hero-pick
+        # path re-detected it and aborted before touching the theme being
+        # edited, so the chosen hero was never applied.
+        self.cfg["exclude_appids"] = [431960]
+        we = {"appid": 431960, "name": "Wallpaper Engine",
+              "rtime_last_played": int(time.time()), "icon_url": None}
+        cache = os.path.join(self.tmp, "440")
+        os.makedirs(cache, exist_ok=True)
+        with open(os.path.join(cache, "palette.json"), "w") as f:
+            json.dump({"game_name": "TF2"}, f)
+        with mock.patch.object(main.steamdetect, "get_owned_games",
+                               lambda k, s: [we] + list(self.GAMES)):
+            state = self._check(force=True, cache_key_override="440")
+        self.assertEqual(len(self.pipeline_calls), 1)
+        self.assertEqual(self.pipeline_calls[0]["appid"], 440)
+        self.assertEqual(self.pipeline_calls[0]["name"], "TF2")
+        self.assertEqual(state["last_cache_key"], "440")
+
+    def test_hero_pick_keeps_the_manual_hold(self):
+        self._check(force=True, cache_key_override="440")
+        state = main.load_state(self.cfg)
+        self.assertEqual(len(self.pipeline_calls), 1)
+        self.assertEqual(state["manual_hold"]["identity"], "440")
+
+    def test_hero_pick_handles_non_steam_cache_keys(self):
+        cache = os.path.join(self.tmp, "custom_demo")
+        os.makedirs(cache, exist_ok=True)
+        with open(os.path.join(cache, "palette.json"), "w") as f:
+            json.dump({"game_name": "Demo Game"}, f)
+        self._check(force=True, cache_key_override="custom_demo")
+        self.assertEqual(len(self.pipeline_calls), 1)
+        self.assertEqual(self.pipeline_calls[0]["cache_key"], "custom_demo")
+        self.assertEqual(self.pipeline_calls[0]["name"], "Demo Game")
+
     def test_playing_another_game_releases_hold(self):
         games = [dict(self.GAMES[0]),
                  dict(self.GAMES[1], rtime_last_played=self.hold_at + 60)]

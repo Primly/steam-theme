@@ -4,7 +4,7 @@ This document explains how the app works, maps every module, and records the
 decisions and recent changes so another engineer (or another agent in a
 different harness) can pick up and keep improving it with minimal ramp-up.
 
-Current version: **1.12.4**
+Current version: **1.12.5**
 
 ---
 
@@ -279,7 +279,7 @@ app directory by `save_config` + `cfg_path` / `safe_join`.
 
 ## 8. Testing
 
-- `python -m unittest discover -s tests` (stdlib only; ~271 tests).
+- `python -m unittest discover -s tests` (stdlib only; ~274 tests).
 - Covers path sandboxing, palette math, Steam parsing, art caching, the
   regenerate/upscale passes, live-wallpaper graph conversion, and the web UI
   (incl. the local-only guard).
@@ -443,3 +443,13 @@ No behavior changed; all fixes are defensive.
   `widgets_values_named` and the `widgets_values` array ComfyUI reads, walking
   top-level nodes and subgraph contents (`<instance>_<node>` ids). Called from
   `livewall.generate` and `upscale._comfy` after `workflow_meta`.
+
+### 1.12.5 — hero pick targets its theme
+
+- Bug: `/api/hero-choice` called `check_once(force=True)` with no target, so
+  detection re-ran, picked the last-played app (Wallpaper Engine, on the
+  exclude list) and returned before the pipeline — the pick looked ignored.
+- `check_once(..., cache_key_override=key)` now targets that exact cache folder
+  (numeric → `appid`, otherwise a custom cache key), names it from
+  `cache/<key>/palette.json`, skips detection/hold/exclude logic, and keeps the
+  manual hold afterwards (`source == "hero-pick"`).

@@ -682,7 +682,11 @@ class Handler(BaseHTTPRequestHandler):
                 log(f"hero choice: candidate #{index + 1} selected for {key} "
                     "— regenerating the theme")
                 try:
-                    app.check_once(cfg, log, force=True)
+                    # regenerate THE theme this pick belongs to — never the
+                    # detected game (Wallpaper Engine is excluded and would
+                    # abort the run before reaching the theme)
+                    app.check_once(cfg, log, force=True,
+                                   cache_key_override=key)
                 except Exception as e:
                     log(f"hero-choice regenerate error: {e}")
             threading.Thread(target=work, daemon=True).start()

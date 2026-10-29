@@ -37,7 +37,7 @@ else:
     import linux_theme as theme_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-__version__ = "1.12.4"
+__version__ = "1.12.5"
 
 
 def safe_join(base, *parts):
@@ -997,15 +997,39 @@ def regenerate_cache(cfg, log=print, should_cancel=lambda: False,
     return stats
 
 
-def check_once(cfg, log, force=False, appid_override=None, dry_run=False):
+def check_once(cfg, log, force=False, appid_override=None, dry_run=False,
+               cache_key_override=None):
     """Detection priority: custom (non-Steam) process > Steam now-playing >
     Steam last-played. Theming is keyed per game ('identity'), so replaying
-    the same game never triggers a redundant re-theme."""
+    the same game never triggers a redundant re-theme.
+
+    cache_key_override targets an explicit cached theme (the one the user is
+    editing in the UI) and skips detection entirely."""
     steam_id = cfg.get("steam_id64") or steamdetect.get_steam_id64()
     excludes = set(cfg.get("exclude_appids", []))
     state = load_state(cfg)
 
-    if appid_override:
+    if cache_key_override:
+        # An explicit target: Steam detection is irrelevant here. Wallpaper
+        # Engine is usually the last-played app AND sits on the exclude list,
+        # which used to abort the run before it ever reached the theme the
+        # user was editing (hero picks looked like they did nothing).
+        target = str(cache_key_override)
+        appid_t = int(target) if target.isdigit() else None
+        name_t = target
+        try:
+            with open(os.path.join(cfg_path(cfg, "cache_dir", "cache"),
+                                   target, "palette.json"),
+                      encoding="utf-8") as f:
+                name_t = json.load(f).get("game_name") or name_t
+        except (OSError, ValueError):
+            pass
+        game = {"appid": appid_t, "name": name_t,
+                "rtime_last_played": int(time.time()), "icon_url": None}
+        if appid_t is None:
+            game["cache_key"] = target
+        source = "hero-pick"
+    elif appid_override:
         game = {"appid": appid_override, "name": f"app {appid_override}",
                 "rtime_last_played": int(time.time()), "icon_url": None}
         # resolve the real name if we can
@@ -1073,7 +1097,7 @@ def check_once(cfg, log, force=False, appid_override=None, dry_run=False):
     # is detected, or Steam reports a last-played time newer than the hold.
     hold = state.get("manual_hold")
     held = str(hold.get("identity") or "") if isinstance(hold, dict) else ""
-    if held and not appid_override:
+    if held and not (appid_override or cache_key_override):
         if identity == held:
             # the held game is what's detected now — the hold did its job
             state.pop("manual_hold", None)
@@ -1142,7 +1166,7 @@ def check_once(cfg, log, force=False, appid_override=None, dry_run=False):
         # manual-hold rerun (redo buttons), which deliberately ignored the
         # detected game: keep the hold so the next poll doesn't instantly
         # revert the theme the user just chose to work on.
-        if source != "manual-hold":
+        if source not in ("manual-hold", "hero-pick"):
             state.pop("manual_hold", None)
         state.update({"last_key": key, "last_identity": identity,
                       "last_appid": appid, "last_cache_key": cache_key,

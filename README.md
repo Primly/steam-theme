@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.12.4-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.12.5-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -755,7 +755,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 271 tests
+python -m unittest discover -s tests -v   # 274 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -802,6 +802,13 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.12.5** — **hero picks actually apply**: the gallery's hero picker ran
+  `check_once(force=True)` without a target, so it re-detected the last-played
+  app — usually Wallpaper Engine, which is on the exclude list — and returned
+  before touching the theme being edited. `check_once` gained a
+  `cache_key_override` that targets that exact cached theme (Steam appid or a
+  custom cache key, named from its `palette.json`), skips detection entirely,
+  and keeps the manual hold.
 - **1.12.4** — **the history graph matches the job**: `extra_pnginfo.workflow`
   embedded the saved workflow verbatim, so a submitted job still displayed the
   template's default image (`hero_1_upscaled_…png`) in its `LoadImage` nodes
