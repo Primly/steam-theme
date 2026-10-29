@@ -37,7 +37,7 @@ else:
     import linux_theme as theme_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-__version__ = "1.12.2"
+__version__ = "1.12.3"
 
 
 def safe_join(base, *parts):

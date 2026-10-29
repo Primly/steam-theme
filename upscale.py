@@ -761,12 +761,19 @@ def _comfy(src, dst, cfg, log, target_w, target_h, context=None,
         if dropped:
             log(f"  [up] unknown workflow placeholders ignored: "
                 f"{', '.join(sorted(set(dropped)))}")
+        import livewall
+        # a fresh sampler seed per image — a saved workflow carries a fixed
+        # number, so every upscale would use the same noise otherwise
+        if c.get("randomize_seed", True):
+            seeds = livewall.randomize_seeds(wf)
+            if seeds:
+                log("  [up] random seed: "
+                    + ", ".join(f"{k}={v}" for _, k, v in seeds))
         # include an editable *graph* workflow so history's "Open as
         # workflow in a new tab" works (a configured graph save is embedded
         # verbatim; anything else is synthesized from the executed prompt)
         payload = {"prompt": wf}
         try:
-            import livewall
             meta = livewall.workflow_meta(_workflow_text(c, role), wf, base)
             if meta:
                 payload["extra_data"] = {"extra_pnginfo": {"workflow": meta}}

@@ -1687,6 +1687,31 @@ class TestComfySubmit(unittest.TestCase):
         self.assertEqual(self.submitted["5"]["inputs"]["text"],
                          "Hades II key art, dark fantasy")
 
+    def _seed_workflow(self):
+        self.cfg["comfy"]["workflow"] = json.dumps({
+            "1": {"class_type": "LoadImage", "inputs": {"image": "x.jpg"}},
+            "2": {"class_type": "KSampler",
+                  "inputs": {"seed": 20, "steps": 20}},
+            "9": {"class_type": "SaveImage",
+                  "inputs": {"filename_prefix": "orig"}}})
+
+    def test_seed_is_randomized_per_submit(self):
+        self._seed_workflow()
+        self._run()
+        first = self.submitted["2"]["inputs"]["seed"]
+        self._run()
+        second = self.submitted["2"]["inputs"]["seed"]
+        self.assertNotEqual(first, 20)
+        self.assertNotEqual(second, 20)
+        self.assertNotEqual(first, second)
+        self.assertEqual(self.submitted["2"]["inputs"]["steps"], 20)
+
+    def test_seed_kept_when_randomize_is_off(self):
+        self._seed_workflow()
+        self.cfg["comfy"]["randomize_seed"] = False
+        self._run()
+        self.assertEqual(self.submitted["2"]["inputs"]["seed"], 20)
+
     def test_submit_http_error(self):
         def bad_post(url, **kw):
             if url.endswith("/prompt"):

@@ -419,6 +419,9 @@
   <div class="row">
     <div class="switch"><input type="checkbox" id="comfyUnload"><span>Unload models from RAM/VRAM after each generation (upscale <i>and</i> video)</span></div>
   </div>
+  <div class="row">
+    <div class="switch"><input type="checkbox" id="comfyRandomSeed" checked><span>Randomize the sampler seed for every upscale (otherwise the workflow's saved seed is reused)</span></div>
+  </div>
   <p class="hint">Keeps the GPU free for the game. Queued upscales drain automatically when no
     game is detected, and if they belong to the theme on screen it's re-applied with the
     crisp versions.</p>
@@ -868,6 +871,7 @@ async function load() {
   setV("comfyWfIcon", cwfs.icon || "");
   setC("comfyDefer", cm.defer_while_gaming !== false);
   setC("comfyUnload", cm.unload_models_after !== false);
+  setC("comfyRandomSeed", cm.randomize_seed !== false);
   setV("comfyTimeout", cm.timeout_seconds ?? 900);
   providerChanged();
   const lw = cfg.livewall || {};
@@ -949,6 +953,7 @@ async function save(apply) {
                port: Math.min(65535, Math.max(1, parseInt(v("comfyPort")) || 8188)),
                defer_while_gaming: document.getElementById("comfyDefer").checked,
                unload_models_after: document.getElementById("comfyUnload").checked,
+               randomize_seed: document.getElementById("comfyRandomSeed").checked,
                timeout_seconds: Math.min(7200, Math.max(60, parseInt(v("comfyTimeout")) || 900))};
   if (cw && cw !== COMFY_DEFAULT_WORKFLOW) cfg.comfy.workflow = cw;  // default/empty = built-in
   else delete cfg.comfy.workflow;  // Reset/clear must actually persist

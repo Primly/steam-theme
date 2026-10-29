@@ -51,7 +51,8 @@
     "workflows": {"hero": "", "logo": "", "icon": ""},
     "defer_while_gaming": true,
     "timeout_seconds": 900,
-    "unload_models_after": true
+    "unload_models_after": true,
+    "randomize_seed": true
   },
   "livewall": {
     "enabled": false,

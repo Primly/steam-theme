@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.12.2-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.12.3-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -330,7 +330,7 @@ UI takes effect without restarts.
 | `ai.prompt` | built-in | Custom VLM prompt; `{game}`/`{colors}` placeholders |
 | `upscaling.enabled` / `provider` | `false` | `topaz` (cloud, credits), `comfy` (local ComfyUI, free), or `ai` (OpenAI images endpoint) |
 | `topaz.api_key` / `model` / `creativity` / `prompt` / `models` | — | Topaz settings; `models.hero/logo/icon` override per role |
-| `comfy.host` / `port` / `workflow` / `workflows` / `defer_while_gaming` / `timeout_seconds` / `unload_models_after` | `127.0.0.1` / `8188` / built-in / — / `true` / `900` / `true` | Local ComfyUI upscaling; `workflow` = Export-API JSON (empty = built-in Ultimate SD Upscale default); `workflows.hero/logo/icon` override per role; jobs defer to a queue while a game runs; `unload_models_after` frees models from RAM/VRAM after each generation |
+| `comfy.host` / `port` / `workflow` / `workflows` / `defer_while_gaming` / `timeout_seconds` / `unload_models_after` / `randomize_seed` | `127.0.0.1` / `8188` / built-in / — / `true` / `900` / `true` / `true` | Local ComfyUI upscaling; `workflow` = Export-API JSON (empty = built-in Ultimate SD Upscale default); `workflows.hero/logo/icon` override per role; jobs defer to a queue while a game runs; `unload_models_after` frees models from RAM/VRAM after each generation; `randomize_seed` rolls a fresh seed per image (off = reuse the workflow's seed) |
 | `ai.upscale_model` | `ai.model` | Model for the `ai` images provider |
 | `livewall.enabled` / `provider` / `host` / `port` / `workflow` / `all_heroes` / `topaz_finish` / `randomize_seed` / `defer_while_gaming` / `timeout_seconds` / `we_monitor` | `false` / `comfy` / `127.0.0.1` / `8188` / built-in / `true` / `true` / `true` / `true` / `3600` / `-1` | Looping-video wallpaper: ComfyUI video workflow (empty = built-in LTX-2.5 default; graph saves accepted), one clip per hero candidate (`all_heroes`: every candidate, rotated on the theme interval; off = only the hero currently displayed gets a clip), queued while gaming; `we_monitor` -1 = hero display, else a WE monitor index; `topaz_finish` runs the local Topaz Video AI ×2 upscale + `apf-2` interpolation (off = raw diffusion video, no local Topaz license needed); `randomize_seed` rolls a fresh `seed`/`noise_seed` per clip (off = reuse the workflow's fixed seed) |
 | `signalrgb.*` (Windows) | — | `enabled`, `base_url`, `custom_effect`, `effect_style`, `effect_scope` (`per_game`/`single`), `effects_dir`, `fallback_effect` |
@@ -523,6 +523,11 @@ Details:
   cache, so editing one role only re-generates that role.
 - The `LoadImage` input and `SaveImage` filename prefix are wired
   automatically per job; everything else in the workflow is yours to tweak.
+- **A fresh seed per upscale** (default on): the seed saved in the workflow is
+  fixed, so a new `seed` / `noise_seed` is rolled for each image and logged
+  (`[up] random seed: seed=412938475610`). Results are cached per source+model,
+  so this only changes new renders. Untick *Randomize the sampler seed* to pin
+  the workflow's own seed.
 - **Defer while gaming** (on by default): while a game is running, upscale
   jobs are queued instead of competing with it for the GPU. The queue
   drains when you're idle, and if the current theme's art finishes
@@ -746,7 +751,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 266 tests
+python -m unittest discover -s tests -v   # 268 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -793,6 +798,10 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.12.3** — **random seeds for upscaling too**: the ComfyUI upscale path now
+  rolls a fresh `seed` / `noise_seed` per image (new *Randomize the sampler
+  seed* toggle in the Upscaling tab, default on) and logs it, matching the video
+  path. Cached upscales are untouched — only new renders differ.
 - **1.12.2** — **random seeds for video**: ComfyUI's "randomize" seed control is
   frontend-only, so the fixed `noise_seed` saved in the workflow was sent with
   every job and every clip came out identical. The app now rolls a fresh
