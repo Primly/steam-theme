@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.12.0-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.12.1-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -738,7 +738,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 257 tests
+python -m unittest discover -s tests -v   # 262 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -769,6 +769,7 @@ CI. Platform-specific tests skip cleanly on the other OS.
 | SignalRGB test fails | Pro subscription, or check the API URL in Extras |
 | OpenRGB "SDK server not reachable" | Run `openrgb --server` (and autostart it); check host/port in Extras |
 | Topaz test/upscale fails | Key invalid or out of credits — the Test button only verifies the key |
+| Video gen fails with a Topaz **licence** error (`Failed to configure output pad`, `许可证检查失败`) | The `TopazVideoAI` node always loads models from the **newer** `C:\ProgramData\Topaz Labs LLC\Topaz Video\models`, so an ffmpeg from the legacy `Topaz Video AI` install can't read them. Set the node's `topaz_ffmpeg_path` to `C:\Program Files\Topaz Labs LLC\Topaz Video` (the folder, not the exe) — or uncheck **Topaz finish**. The app now warns about this before submitting |
 | Gallery is missing games | The gallery lists every cache folder that has artwork — a missing game was never fetched (run *Ultimate Fetch*, or play it once). *not themed yet* entries just need “Generate this theme” |
 | ComfyUI test fails | ComfyUI must be installed and running at the host/port in the Upscaling section; the Test button checks reachability **and** your workflow JSON |
 | ComfyUI upscales never seem to run | *Defer while gaming* is on (default): jobs queue while you play and drain when you stop — the log names every deferred job. Also check the per-image timeout |
@@ -784,6 +785,14 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.12.1** — **legacy-Topaz guard**: the `TopazVideoAI` node resolves models
+  itself and always prefers the newer `…\Topaz Video\models` folder, so an
+  ffmpeg from the old `Topaz Video AI` install can't read them — the job dies
+  with `Failed to configure output pad`, which the node reports as a **licence
+  error** (very misleading). The app now spots that mismatch before submitting
+  (definitively when ComfyUI is local, as a conditional hint when it's remote)
+  and says so in the log and in the Live wallpaper **Test** result. The Test
+  result also no longer claims the local Topaz node spends cloud credits.
 - **1.12.0** — **per-image AI prompts + game-based theme names**. One VLM pass
   used to describe only the active hero, and that one description was reused for
   every hero candidate, the logo, the icon and every looping video — so

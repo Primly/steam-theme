@@ -263,7 +263,8 @@ def test_livewall(body):
             gpu = devs[0].get("name", "")
     except ValueError:
         pass
-    api, werr = _lw.validate_workflow(body.get("workflow") or "")
+    api, werr = _lw.validate_workflow(body.get("workflow") or "",
+                                      body.get("topaz_finish", True))
     if werr:
         return {"ok": False, "error":
                 f"connected ({gpu or 'ComfyUI up'}) but workflow: {werr}"}
@@ -274,8 +275,12 @@ def test_livewall(body):
               f"({len(api)} nodes incl. subgraph flattening; video output "
               "found; placeholders supported)")
     if n_topaz:
-        detail += (f" — WARNING: {n_topaz} TopazVideoAI node(s) have "
-                   "enable_upscale on, which SPENDS Topaz credits per video")
+        detail += (f" — note: {n_topaz} TopazVideoAI node(s) run the LOCAL "
+                   "Topaz install (no cloud credits); Topaz must be licensed "
+                   "on that machine")
+    warn = _lw.topaz_path_warning(api, base)
+    if warn:
+        detail += f" — WARNING: {warn}"
     return {"ok": True, "latency_ms": ms, "detail": detail}
 
 

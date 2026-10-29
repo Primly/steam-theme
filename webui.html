@@ -449,7 +449,7 @@
     <input id="lwHost" placeholder="127.0.0.1">
     <label for="lwPort" style="min-width:0">port</label>
     <input id="lwPort" type="number" min="1" max="65535" placeholder="8188" style="width:90px">
-    <button onclick="runTest('livewall', {host: v('lwHost'), port: v('lwPort'), workflow: v('lwWorkflow')}, 'lwResult')">Test</button>
+    <button onclick="runTest('livewall', {host: v('lwHost'), port: v('lwPort'), workflow: v('lwWorkflow'), topaz_finish: document.getElementById('lwTopazFinish').checked}, 'lwResult')">Test</button>
     <div class="result" id="lwResult"></div>
   </div>
   <div class="row">

@@ -39,6 +39,7 @@ import subprocess
 import threading
 import time
 import uuid
+from urllib.parse import urlparse
 
 import requests
 
@@ -371,10 +372,10 @@ def parse_workflow(text, log=None, topaz_finish=True):
     return api, None
 
 
-def validate_workflow(text):
+def validate_workflow(text, topaz_finish=True):
     """Structural validation for the UI Test button. Returns
     (api_or_None, error_or_None)."""
-    api, err = parse_workflow(text)
+    api, err = parse_workflow(text, topaz_finish=topaz_finish)
     return api, err
 
 
@@ -808,6 +809,42 @@ def _hero_device(cfg):
 
 # ---------------------------------------------------------------- generate
 
+_TOPAZ_INSTALL_BASE = r"C:\Program Files\Topaz Labs LLC"
+
+
+def topaz_path_warning(api, base=""):
+    """Warn when a workflow's TopazVideoAI node uses the LEGACY install.
+
+    The node resolves models itself (detect_topaz_model_dir), preferring
+    '<ProgramData>\\Topaz Labs LLC\\Topaz Video\\models' whenever that folder
+    holds models. An ffmpeg from the older 'Topaz Video AI' install can't read
+    those files, and the node reports the failure as a bogus licence error
+    ("Failed to configure output pad"). Returns a sentence, or None when the
+    workflow has no Topaz node or already uses the modern install."""
+    paths = [str((n.get("inputs") or {}).get("topaz_ffmpeg_path") or "")
+             for n in (api or {}).values()
+             if isinstance(n, dict) and n.get("class_type") == "TopazVideoAI"]
+    legacy = sorted({p for p in paths if "topaz video ai" in p.lower()})
+    if not legacy:
+        return None
+    modern = os.path.join(_TOPAZ_INSTALL_BASE, "Topaz Video")
+    try:
+        local = urlparse(base).hostname in ("127.0.0.1", "localhost", "::1")
+    except ValueError:
+        local = False
+    if local and os.path.isfile(os.path.join(modern, "ffmpeg.exe")):
+        return (f"TopazVideoAI uses the LEGACY install ({legacy[0]}), but "
+                f"the newer '{modern}' is installed too and the node always "
+                "loads ITS models — that ffmpeg can't read them, so the job "
+                "fails with 'Failed to configure output pad' (reported as a "
+                f"licence error). Set topaz_ffmpeg_path to '{modern}', or "
+                "turn Topaz finish off.")
+    return (f"TopazVideoAI uses the legacy install ({legacy[0]}). If the "
+            f"newer '{modern}' is also installed, the node loads ITS models "
+            "and this ffmpeg can't read them (it shows up as a licence "
+            f"error). Use '{modern}' instead, or turn Topaz finish off.")
+
+
 def generate(cfg, hero_path, dst, context, log=print, defer=True):
     """Generate the looping video for hero_path into dst via ComfyUI.
     Deferred while gaming (enqueue) unless defer=False. Never raises.
@@ -836,6 +873,9 @@ def generate(cfg, hero_path, dst, context, log=print, defer=True):
     except (TypeError, ValueError):
         t_out = 3600
     t_out = max(60, t_out)
+    warn = topaz_path_warning(api, base)
+    if warn:
+        log(f"  [livewall] WARNING: {warn}")
     try:
         # 1) filter widget constants against the server's real input specs
         classes = sorted({str(n.get("class_type")) for n in api.values()})

@@ -221,6 +221,60 @@ class TestGraphSynthesis(unittest.TestCase):
         self.assertEqual(len(meta["nodes"]), 4)
 
 
+class TestTopazPathWarning(unittest.TestCase):
+    """The TopazVideoAI node always loads models from the NEWER
+    '<base>\\Topaz Video\\models' folder, so an ffmpeg from the legacy
+    'Topaz Video AI' install fails with 'Failed to configure output pad' —
+    which the node reports as a bogus licence error."""
+
+    LEGACY = {"259": {"class_type": "TopazVideoAI",
+                      "inputs": {"topaz_ffmpeg_path":
+                                 r"C:\Program Files\Topaz Labs LLC"
+                                 r"\Topaz Video AI"}}}
+
+    def test_legacy_install_flagged(self):
+        msg = livewall.topaz_path_warning(self.LEGACY, "http://127.0.0.1:8188")
+        self.assertIsNotNone(msg)
+        self.assertIn("Topaz Video AI", msg)
+        self.assertIn("Topaz finish", msg)
+
+    def test_remote_host_uses_conditional_wording(self):
+        msg = livewall.topaz_path_warning(self.LEGACY, "http://100.83.219.4:8188")
+        self.assertIsNotNone(msg)
+        self.assertIn("If the newer", msg)
+
+    def test_modern_install_quiet(self):
+        api = {"259": {"class_type": "TopazVideoAI",
+                       "inputs": {"topaz_ffmpeg_path":
+                                  r"C:\Program Files\Topaz Labs LLC"
+                                  r"\Topaz Video"}}}
+        self.assertIsNone(
+            livewall.topaz_path_warning(api, "http://127.0.0.1:8188"))
+
+    def test_no_topaz_node_quiet(self):
+        api = {"1": {"class_type": "LoadImage", "inputs": {}}}
+        self.assertIsNone(
+            livewall.topaz_path_warning(api, "http://127.0.0.1:8188"))
+
+    def test_topaz_finish_off_skips_the_check(self):
+        # parse_workflow strips the node when Topaz finishing is disabled,
+        # so a Test with the toggle off must not warn about the legacy path
+        wf = json.dumps({"1": {"class_type": "LoadImage",
+                                "inputs": {"image": "h.jpg"}},
+                         "2": {"class_type": "TopazVideoAI",
+                                "inputs": {"images": ["1", 0],
+                                           "topaz_ffmpeg_path":
+                                           self.LEGACY["259"]["inputs"][
+                                               "topaz_ffmpeg_path"]}}})
+        api, err = livewall.validate_workflow(wf)
+        self.assertIsNone(err)
+        self.assertIsNotNone(livewall.topaz_path_warning(api, "http://x:8188"))
+        api_off, err = livewall.validate_workflow(wf, topaz_finish=False)
+        self.assertIsNone(err)
+        self.assertIsNone(
+            livewall.topaz_path_warning(api_off, "http://x:8188"))
+
+
 class TestWorkflowValidation(LiveWallFixture):
     def _api_wf(self, **extra):
         wf = {"1": {"class_type": "LoadImage", "inputs": {"image": "h.jpg"}},

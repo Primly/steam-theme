@@ -4,7 +4,7 @@ This document explains how the app works, maps every module, and records the
 decisions and recent changes so another engineer (or another agent in a
 different harness) can pick up and keep improving it with minimal ramp-up.
 
-Current version: **1.12.0**
+Current version: **1.12.1**
 
 ---
 
@@ -279,7 +279,7 @@ app directory by `save_config` + `cfg_path` / `safe_join`.
 
 ## 8. Testing
 
-- `python -m unittest discover -s tests` (stdlib only; ~257 tests).
+- `python -m unittest discover -s tests` (stdlib only; ~262 tests).
 - Covers path sandboxing, palette math, Steam parsing, art caching, the
   regenerate/upscale passes, live-wallpaper graph conversion, and the web UI
   (incl. the local-only guard).
@@ -401,3 +401,17 @@ No behavior changed; all fixes are defensive.
   `run_pipeline`, `regenerate_cache`, `_cached_palette_ctx`);
   `_palette_title` normalises cached themes on re-apply.
 - **Toggle**: `ai.use_for.per_image_prompts` (config UI checkbox, default on).
+
+### 1.12.1 — legacy-Topaz guard
+
+- `TopazVideoAI` resolves models itself (`detect_topaz_model_dir`) and always
+  prefers `C:\ProgramData\Topaz Labs LLC\Topaz Video\models` when that folder
+  holds models. An ffmpeg from the legacy `Topaz Video AI` install cannot read
+  them → probe fails with `Failed to configure output pad`, surfaced as a
+  bogus licence error. Verified against the local installs: new ffmpeg + new
+  models = OK, **old ffmpeg + new models = the exact failure**.
+- `livewall.topaz_path_warning(api, base)` flags a legacy `topaz_ffmpeg_path`;
+  called from `generate()` (log) and `webui.test_livewall` (Test result). It is
+  definitive when ComfyUI is localhost (both installs visible), conditional
+  otherwise. `validate_workflow(text, topaz_finish=)` keeps the check honest
+  when Topaz finishing is off.
