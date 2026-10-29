@@ -776,7 +776,8 @@ def _comfy(src, dst, cfg, log, target_w, target_h, context=None,
         try:
             meta = livewall.workflow_meta(_workflow_text(c, role), wf, base)
             if meta:
-                payload["extra_data"] = {"extra_pnginfo": {"workflow": meta}}
+                payload["extra_data"] = {"extra_pnginfo": {
+                    "workflow": livewall.sync_graph_runtime(meta, wf)}}
         except Exception:
             pass
         r = requests.post(base + "/prompt", timeout=60, json=payload)

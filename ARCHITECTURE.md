@@ -4,7 +4,7 @@ This document explains how the app works, maps every module, and records the
 decisions and recent changes so another engineer (or another agent in a
 different harness) can pick up and keep improving it with minimal ramp-up.
 
-Current version: **1.12.3**
+Current version: **1.12.4**
 
 ---
 
@@ -279,7 +279,7 @@ app directory by `save_config` + `cfg_path` / `safe_join`.
 
 ## 8. Testing
 
-- `python -m unittest discover -s tests` (stdlib only; ~268 tests).
+- `python -m unittest discover -s tests` (stdlib only; ~271 tests).
 - Covers path sandboxing, palette math, Steam parsing, art caching, the
   regenerate/upscale passes, live-wallpaper graph conversion, and the web UI
   (incl. the local-only guard).
@@ -423,12 +423,23 @@ No behavior changed; all fixes are defensive.
 - `livewall.randomize_seeds(api)` rewrites plain `seed` / `noise_seed` inputs
   with a fresh 50-bit value in `generate()` (toggle `livewall.randomize_seed`,
   default on) and logs them for reproduction. Links and dotted sub-keys are
-  untouched. Note: the history graph keeps the workflow's TEMPLATE seed —
-  reproduce a clip from the logged value (or turn the toggle off to pin the
-  workflow's own seed).
+  untouched, and `sync_graph_runtime` writes the rolled value into the
+  history graph so the saved workflow matches the job.
 
 ### 1.12.3 — seeds for upscaling
 
 - `upscale._comfy` applies `livewall.randomize_seeds` to the filled workflow
   (`comfy.randomize_seed`, default on) before submit — same helper and logging
   as the video path. The cache slug is unchanged, so only new upscales differ.
+
+### 1.12.4 — history graph matches the job
+
+- Audit finding: the *executed* prompt was always right — every `LoadImage`
+  got the uploaded hero (the LTX workflow has exactly two, feeding the first /
+  last frame guides) — but `extra_pnginfo.workflow` embedded the saved graph
+  verbatim, so the history canvas still showed the template default file.
+- `livewall.sync_graph_runtime(graph, api)` now copies the runtime values we
+  rewrite at submit (`image`, `seed`/`noise_seed`, `filename_prefix`) into both
+  `widgets_values_named` and the `widgets_values` array ComfyUI reads, walking
+  top-level nodes and subgraph contents (`<instance>_<node>` ids). Called from
+  `livewall.generate` and `upscale._comfy` after `workflow_meta`.

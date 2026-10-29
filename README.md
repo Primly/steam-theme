@@ -10,7 +10,7 @@ artwork and named by AI. Play a game, and your whole PC reskins itself.
 [![CI](https://github.com/Primly/steam-theme/actions/workflows/ci.yml/badge.svg)](https://github.com/Primly/steam-theme/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%28KDE%20Plasma%206%29-blue)](https://github.com/Primly/steam-theme)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.12.3-66c0f4)](https://github.com/Primly/steam-theme/releases)
+[![Version](https://img.shields.io/badge/version-1.12.4-66c0f4)](https://github.com/Primly/steam-theme/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -565,6 +565,10 @@ display:
   good one. Linked seed inputs and dotted sub-keys like `sampling_mode.seed`
   are left untouched. Untick *Randomize the noise seed* to keep the workflow's
   fixed value.
+- **The history graph shows what actually ran**: the workflow ComfyUI stores
+  with each job has the uploaded image name and the real seed written into it,
+  so *Open as workflow in a new tab* shows the frames the job used — not the
+  template's stale default filename — and can be re-run.
 - **Defer while gaming** (default on): generation queues while a game runs
   and drains when you stop — one video takes minutes of GPU, so it never
   fights your game for it.
@@ -751,7 +755,7 @@ Everything the app writes stays inside its own folder:
 ## 🧪 Development
 
 ```bash
-python -m unittest discover -s tests -v   # 268 tests
+python -m unittest discover -s tests -v   # 271 tests
 ```
 
 - `wallpaper.py` — shared, platform-agnostic compositing
@@ -798,6 +802,13 @@ CI. Platform-specific tests skip cleanly on the other OS.
 
 ## 📜 Changelog
 
+- **1.12.4** — **the history graph matches the job**: `extra_pnginfo.workflow`
+  embedded the saved workflow verbatim, so a submitted job still displayed the
+  template's default image (`hero_1_upscaled_…png`) in its `LoadImage` nodes
+  even though the executed prompt used the uploaded hero. The embedded graph
+  is now synced with the runtime values (`image`, `seed` / `noise_seed`,
+  `filename_prefix`) for both the video and upscale paths, so *Open as workflow
+  in a new tab* shows — and can re-run — exactly what happened.
 - **1.12.3** — **random seeds for upscaling too**: the ComfyUI upscale path now
   rolls a fresh `seed` / `noise_seed` per image (new *Randomize the sampler
   seed* toggle in the Upscaling tab, default on) and logs it, matching the video

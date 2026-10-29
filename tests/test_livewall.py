@@ -221,6 +221,67 @@ class TestGraphSynthesis(unittest.TestCase):
         self.assertEqual(len(meta["nodes"]), 4)
 
 
+class TestGraphRuntimeSync(unittest.TestCase):
+    """ComfyUI builds the history canvas from extra_pnginfo.workflow, so the
+    embedded graph must show the values the job actually used — the uploaded
+    image name, not the workflow's template default."""
+
+    GRAPH = {
+        "version": 0.4,
+        "links": [],
+        "nodes": [
+            {"id": 31, "type": "LoadImage",
+             "widgets_values": ["old.png", "image"],
+             "widgets_values_named": {"image": "old.png",
+                                      "upload": "image"}},
+            {"id": 251, "type": "sub-uuid",
+             "widgets_values": ["p", 111],
+             "widgets_values_named": {"value": "p", "noise_seed": 111}},
+        ],
+        "definitions": {"subgraphs": [
+            {"id": "sub-uuid", "nodes": [
+                {"id": 196, "type": "RandomNoise",
+                 "widgets_values": [111, "randomize"],
+                 "widgets_values_named": {"noise_seed": 111,
+                                          "control_after_generate":
+                                              "randomize"}}]}]},
+    }
+
+    def test_image_and_seed_synced(self):
+        import copy
+        g = copy.deepcopy(self.GRAPH)
+        api = {"31": {"class_type": "LoadImage",
+                      "inputs": {"image": "steamtheme_x.jpg"}},
+               "251_196": {"class_type": "RandomNoise",
+                           "inputs": {"noise_seed": 987654}}}
+        livewall.sync_graph_runtime(g, api)
+        top = g["nodes"][0]
+        self.assertEqual(top["widgets_values"][0], "steamtheme_x.jpg")
+        self.assertEqual(top["widgets_values_named"]["image"],
+                         "steamtheme_x.jpg")
+        inner = g["definitions"]["subgraphs"][0]["nodes"][0]
+        self.assertEqual(inner["widgets_values"][0], 987654)
+        self.assertEqual(inner["widgets_values_named"]["noise_seed"],
+                         987654)
+        # the frontend-only control value is untouched
+        self.assertEqual(inner["widgets_values"][1], "randomize")
+
+    def test_unknown_nodes_and_non_graphs_are_safe(self):
+        import copy
+        g = copy.deepcopy(self.GRAPH)
+        livewall.sync_graph_runtime(g, {"999": {"class_type": "X"}})
+        self.assertEqual(g["nodes"][0]["widgets_values"][0], "old.png")
+        self.assertEqual(livewall.sync_graph_runtime({"a": 1}, {}), {"a": 1})
+
+    def test_links_are_not_synced(self):
+        import copy
+        g = copy.deepcopy(self.GRAPH)
+        api = {"31": {"class_type": "LoadImage",
+                      "inputs": {"image": ["9", 0]}}}
+        livewall.sync_graph_runtime(g, api)
+        self.assertEqual(g["nodes"][0]["widgets_values"][0], "old.png")
+
+
 class TestSeedRandomization(unittest.TestCase):
     """ComfyUI's "randomize" seed control lives in the frontend — an API
     submission carries whatever number the workflow was saved with."""

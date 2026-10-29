@@ -636,6 +636,63 @@ def api_to_graph(api, defs=None):
     }
 
 
+_GRAPH_SYNC_KEYS = ("image", "noise_seed", "seed", "filename_prefix")
+
+
+def _graph_nodes(graph):
+    """(api_id, node) pairs for a graph save, including subgraph contents."""
+    nodes = graph.get("nodes") or []
+    for n in nodes:
+        if isinstance(n, dict):
+            yield str(n.get("id")), n
+    subs = {s.get("id"): s
+            for s in (graph.get("definitions") or {}).get("subgraphs") or []
+            if isinstance(s, dict)}
+    for inst in nodes:
+        sg = subs.get(inst.get("type")) if isinstance(inst, dict) else None
+        if not sg:
+            continue
+        for n in sg.get("nodes") or []:
+            if isinstance(n, dict):
+                yield f"{inst.get('id')}_{n.get('id')}", n
+
+
+def sync_graph_runtime(graph, api):
+    """Make a saved workflow graph match the job actually being submitted.
+
+    `generate()` and `upscale._comfy` rewrite the uploaded image name, the
+    sampler seeds and the output prefix at submit time. ComfyUI builds the
+    history canvas from `extra_pnginfo.workflow`, so without this the graph
+    would still show the workflow's template values — e.g. a stale default
+    hero filename that was never used. Updates both `widgets_values_named`
+    and the matching `widgets_values` entry (the array is what ComfyUI's
+    loader reads). Returns the graph."""
+    if not (isinstance(graph, dict) and isinstance(graph.get("nodes"), list)):
+        return graph
+    for api_id, node in _graph_nodes(graph):
+        src = (api or {}).get(api_id)
+        if not isinstance(src, dict):
+            continue
+        named = node.get("widgets_values_named")
+        values = node.get("widgets_values")
+        inputs = src.get("inputs") or {}
+        for key in _GRAPH_SYNC_KEYS:
+            new = inputs.get(key)
+            if new is None or isinstance(new, (list, dict)):
+                continue        # links / structured values are not widgets
+            old = named.get(key) if isinstance(named, dict) else None
+            if old is None or old == new:
+                continue
+            if isinstance(named, dict) and key in named:
+                named[key] = new
+            if isinstance(values, list):
+                for i, v in enumerate(values):
+                    if v == old:
+                        values[i] = new
+                        break
+    return graph
+
+
 def workflow_meta(configured_text, api, base):
     """The editable workflow to stash in extra_data.extra_pnginfo.workflow.
 
@@ -975,7 +1032,8 @@ def generate(cfg, hero_path, dst, context, log=print, defer=True):
         try:
             meta_obj = workflow_meta(lw.get("workflow"), api, base)
             if meta_obj:
-                payload["extra_data"] = {"extra_pnginfo": {"workflow": meta_obj}}
+                payload["extra_data"] = {"extra_pnginfo": {
+                    "workflow": sync_graph_runtime(meta_obj, api)}}
         except Exception:
             pass
         r = requests.post(base + "/prompt", timeout=60, json=payload)
