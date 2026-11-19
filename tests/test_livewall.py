@@ -18,6 +18,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import livewall  # noqa: E402
+import main  # noqa: E402
 
 
 def _mp4_bytes():
@@ -28,7 +29,7 @@ def _mp4_bytes():
 class LiveWallFixture(unittest.TestCase):
     def setUp(self):
         from PIL import Image
-        self.dir = tempfile.mkdtemp()
+        self.dir = tempfile.mkdtemp(dir=main.BASE_DIR)
         self.addCleanup(lambda: __import__("shutil").rmtree(
             self.dir, ignore_errors=True))
         self.hero = os.path.join(self.dir, "hero.jpg")
@@ -645,7 +646,11 @@ class TestLiveWallSubmit(LiveWallFixture):
                            {"filename": "steamtheme_loop_00001_.mp4",
                             "subfolder": "", "type": "output"}]}}}})
         if url.endswith("/view"):
-            return mock.Mock(status_code=200, content=_mp4_bytes())
+            r = mock.MagicMock(status_code=200, content=_mp4_bytes())
+            r.__enter__.return_value = r
+            r.__exit__.return_value = False
+            r.iter_content = lambda n: iter([_mp4_bytes()])
+            return r
         if "/object_info/" in url:
             return self._oi(url, **kw)
         raise AssertionError(url)

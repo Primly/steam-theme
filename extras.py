@@ -46,6 +46,19 @@ def _safe_title_name(name):
     return s.strip().strip(".").strip()[:60] or "Game"
 
 
+def _konsole_safe_name(name):
+    """Konsole scheme name: strip control/line-break chars but KEEP printable
+    UTF-8 (game names may be CJK/Cyrillic — _ini_safe would empty them). A
+    newline here could inject a [General] Command= key into the profile,
+    which Konsole executes; C1 controls and Unicode line/paragraph separators
+    are stripped too. Falls back to 'Game' if nothing printable survives."""
+    s = "".join(c for c in str(name)
+                if ord(c) >= 32 and ord(c) != 127
+                and not (0x80 <= ord(c) <= 0x9F)
+                and c not in "\u2028\u2029")
+    return s.strip().strip(".").strip() or "Game"
+
+
 def effect_title(cfg, palette):
     """Effect title for this palette. In per_game scope every game gets its
     own 'Steam Theme - <Game>' effect (individually tweakable in SignalRGB);
@@ -263,6 +276,9 @@ def apply_windows_terminal(cfg, palette, theme_name, wallpaper_path, log=print):
     except Exception as e:
         log(f"  [wt] could not parse settings.json (comments/trailing commas?): {e}")
         return
+    if not isinstance(settings, dict):
+        log("  [wt] settings.json is not a JSON object, skipping")
+        return
 
     readable = readable_terminal_colors(
         palette,
@@ -279,11 +295,23 @@ def apply_windows_terminal(cfg, palette, theme_name, wallpaper_path, log=print):
     }
     scheme.update(dict(zip(_WT_SLOTS, colors)))
 
-    schemes = settings.setdefault("schemes", [])
-    schemes[:] = [s for s in schemes if s.get("name") != theme_name]
+    schemes = settings.get("schemes")
+    if not isinstance(schemes, list):
+        schemes = []
+        settings["schemes"] = schemes
+    # keep unknown entries (the user's file) but never call .get on them
+    schemes[:] = [s for s in schemes
+                  if not (isinstance(s, dict) and s.get("name") == theme_name)]
     schemes.append(scheme)
 
-    defaults = settings.setdefault("profiles", {}).setdefault("defaults", {})
+    profiles = settings.get("profiles")
+    if not isinstance(profiles, dict):
+        profiles = {}
+        settings["profiles"] = profiles
+    defaults = profiles.get("defaults")
+    if not isinstance(defaults, dict):
+        defaults = {}
+        profiles["defaults"] = defaults
     defaults["colorScheme"] = theme_name
     if wt.get("set_background_image") and wallpaper_path:
         defaults["backgroundImage"] = os.path.abspath(wallpaper_path)
@@ -396,7 +424,10 @@ def apply_konsole(cfg, palette, theme_name, log=print):
     k = cfg.get("konsole", {})
     if not k.get("enabled"):
         return
-    scheme = _safe_title_name(theme_name)
+    # strip control/line-break chars (a newline could inject [General]
+    # Command= into the profile — Konsole EXECUTES that key) but keep
+    # printable UTF-8 so non-Latin game names still theme correctly
+    scheme = _konsole_safe_name(_safe_title_name(theme_name))
     try:
         content = render_konsole_colorscheme(scheme, palette)
     except (ValueError, KeyError) as e:

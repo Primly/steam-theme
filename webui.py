@@ -57,6 +57,26 @@ MAX_BODY_BYTES = 256 * 1024          # config JSON is a few KB; cap abuse
 MAX_LOG_LINES = 1000
 REDO_MODES = {"reapply", "regenerate", "refetch"}
 LOCAL_HOSTNAMES = {"127.0.0.1", "localhost", "::1", "[::1]"}
+# one pipeline run at a time across the UI's trigger endpoints: concurrent
+# check_once/reapply threads race on state.json, slides/ and the cache.
+# Ultimate Fetch / Regenerate All take the same lock, so batch jobs and quick
+# triggers are mutually exclusive too. (The separate service poller is another
+# process — atomic state writes bound that cross-process race.)
+_PIPELINE_LOCK = threading.Lock()
+
+
+def _spawn_locked(work):
+    """Run work() in a daemon thread holding _PIPELINE_LOCK. Returns False if
+    a run is already in progress (caller sends 409); releases the lock if the
+    thread cannot start. work() must release the lock in its finally."""
+    if not _PIPELINE_LOCK.acquire(blocking=False):
+        return False
+    try:
+        threading.Thread(target=work, daemon=True).start()
+    except RuntimeError:
+        _PIPELINE_LOCK.release()
+        return False
+    return True
 
 
 def load_config():
@@ -86,6 +106,7 @@ def save_config(cfg):
     tmp = CONFIG_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
+    os.chmod(tmp, 0o600)  # the file holds every API key — owner-only
     os.replace(tmp, CONFIG_PATH)  # atomic on Windows
 
 
@@ -323,7 +344,8 @@ def _game_names(cfg):
     except Exception:
         pass
     for g in cfg.get("custom_games") or []:
-        if not isinstance(g, dict) or not g.get("name"):
+        if not isinstance(g, dict) or not isinstance(g.get("name"), str) \
+                or not g["name"]:
             continue
         slug = "custom_" + _re.sub(r"[^a-z0-9]+", "-",
                                     g["name"].lower()).strip("-")
@@ -348,7 +370,10 @@ def _gallery():
     current = str(state.get("last_cache_key") or state.get("last_appid") or "")
     names = _game_names(cfg)
     for entry in entries:
-        folder = app.safe_join(root, entry)
+        try:
+            folder = app.safe_join(root, entry)
+        except ValueError:
+            continue
         if not os.path.isdir(folder):
             continue
         cands = artwork.hero_candidates(folder)
@@ -364,8 +389,8 @@ def _gallery():
             continue   # no art and never themed: nothing to show
         themed = bool(p) and os.path.exists(
             os.path.join(folder, app.theme_mod.THEME_FILENAME))
-        game = (p.get("game_name") or names.get(entry)
-                or (f"app {entry}" if entry.isdigit() else entry))
+        game = str(p.get("game_name") or names.get(entry)
+                   or (f"app {entry}" if entry.isdigit() else entry))
         items.append({
             "key": entry,
             "theme_name": p.get("theme_name") or game,
@@ -387,6 +412,9 @@ def _gallery():
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "SteamThemeUI/1.0"
+    # socket timeout: a client dribbling a declared body must not pin a worker
+    # thread forever (the size cap alone doesn't help — the block is in read)
+    timeout = 15
 
     def _send(self, code, obj=None, content_type="application/json", raw=None):
         body = raw if raw is not None else json.dumps(obj).encode()
@@ -412,16 +440,21 @@ class Handler(BaseHTTPRequestHandler):
             # and the response is lost)
             self.close_connection = True
             remaining = min(max(n, 0), 4 * 1024 * 1024)
-            while remaining > 0:
-                chunk = self.rfile.read(min(65536, remaining))
-                if not chunk:
-                    break
-                remaining -= len(chunk)
+            try:
+                while remaining > 0:
+                    chunk = self.rfile.read(min(65536, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+            except OSError:
+                pass
             return None
         try:
             data = json.loads(self.rfile.read(n))
             return data if isinstance(data, (dict, list)) else None
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        except (OSError, ValueError, RecursionError):
+            # OSError: socket timeout/reset mid-read; ValueError: bad JSON or
+            # encoding; RecursionError: pathologically nested JSON
             return None
 
     def _local_only(self):
@@ -628,31 +661,37 @@ class Handler(BaseHTTPRequestHandler):
             def work():
                 import shutil
                 import main as app
-                cfg = app.load_config()
-                log = app._log_factory(cfg)
-                state = app.load_state(cfg)
-                cache_key = str(state.get("last_cache_key")
-                                or state.get("last_appid") or "")
                 try:
-                    if mode == "reapply":
-                        app.reapply(cfg, log)
-                        return
-                    if mode == "refetch" and cache_key:
-                        target = app.safe_join(
-                            app.cfg_path(cfg, "cache_dir", "cache"), cache_key)
-                        shutil.rmtree(target, ignore_errors=True)
-                        log(f"redo: cleared cache for {cache_key} "
-                            "(art + upscales will be re-created)")
-                    app.check_once(cfg, log, force=True)
-                except Exception as e:
-                    log(f"redo error: {e}")
-            threading.Thread(target=work, daemon=True).start()
+                    cfg = app.load_config()
+                    log = app._log_factory(cfg)
+                    state = app.load_state(cfg)
+                    cache_key = str(state.get("last_cache_key")
+                                    or state.get("last_appid") or "")
+                    try:
+                        if mode == "reapply":
+                            app.reapply(cfg, log)
+                            return
+                        if mode == "refetch" and cache_key:
+                            target = app.safe_join(
+                                app.cfg_path(cfg, "cache_dir", "cache"), cache_key)
+                            shutil.rmtree(target, ignore_errors=True)
+                            log(f"redo: cleared cache for {cache_key} "
+                                "(art + upscales will be re-created)")
+                        app.check_once(cfg, log, force=True)
+                    except Exception as e:
+                        log(f"redo error: {e}")
+                finally:
+                    _PIPELINE_LOCK.release()
+            if not _spawn_locked(work):
+                self._send(409, {"ok": False,
+                                 "error": "a pipeline run is already in progress"})
+                return
             self._send(200, {"ok": True, "detail": f"{mode} started; watch the log"})
         elif path == "/api/hero-choice":
             import re as _re
             import artwork
             key = str(body.get("key") or "")
-            if not _re.fullmatch(r"[A-Za-z0-9._-]+", key):
+            if not _re.fullmatch(r"[A-Za-z0-9._-]+", key) or not key.strip("."):
                 self._send(400, {"ok": False, "error": "bad theme key"})
                 return
             try:
@@ -670,26 +709,32 @@ class Handler(BaseHTTPRequestHandler):
                                  "error": "hero picks apply to the current theme "
                                           "— apply this theme from the gallery first"})
                 return
-            cache = app.safe_join(app.cfg_path(cfg, "cache_dir", "cache"), key)
             try:
+                cache = app.safe_join(app.cfg_path(cfg, "cache_dir", "cache"), key)
                 artwork.set_hero_choice(cache, index)
             except ValueError as e:
                 self._send(400, {"ok": False, "error": str(e)})
                 return
 
             def work():
-                log = app._log_factory(cfg)
-                log(f"hero choice: candidate #{index + 1} selected for {key} "
-                    "— regenerating the theme")
                 try:
-                    # regenerate THE theme this pick belongs to — never the
-                    # detected game (Wallpaper Engine is excluded and would
-                    # abort the run before reaching the theme)
-                    app.check_once(cfg, log, force=True,
-                                   cache_key_override=key)
-                except Exception as e:
-                    log(f"hero-choice regenerate error: {e}")
-            threading.Thread(target=work, daemon=True).start()
+                    log = app._log_factory(cfg)
+                    log(f"hero choice: candidate #{index + 1} selected for {key} "
+                        "— regenerating the theme")
+                    try:
+                        # regenerate THE theme this pick belongs to — never the
+                        # detected game (Wallpaper Engine is excluded and would
+                        # abort the run before reaching the theme)
+                        app.check_once(cfg, log, force=True,
+                                       cache_key_override=key)
+                    except Exception as e:
+                        log(f"hero-choice regenerate error: {e}")
+                finally:
+                    _PIPELINE_LOCK.release()
+            if not _spawn_locked(work):
+                self._send(409, {"ok": False,
+                                 "error": "a pipeline run is already in progress"})
+                return
             self._send(200, {"ok": True,
                              "detail": f"hero #{index + 1} selected — regenerating "
                                        "(a new hero may need one upscale; watch the log)"})
@@ -707,13 +752,18 @@ class Handler(BaseHTTPRequestHandler):
             import main as app
             cfg = app.load_config()
             with_videos = bool(body.get("videos", True))
+            if not _PIPELINE_LOCK.acquire(blocking=False):
+                self._send(409, {"ok": False,
+                                 "error": "a pipeline run is already in progress"})
+                return
             REGEN.update(running=True, done=0, total=0, current="",
                          cancel_requested=False, paused=False, stats=None,
                          error=None, videos=with_videos)
 
             def work():
-                log = app._log_factory(cfg)
+                log = lambda m: None
                 try:
+                    log = app._log_factory(cfg)
                     stats = app.regenerate_cache(
                         cfg, log, with_videos=with_videos,
                         should_cancel=lambda: REGEN["cancel_requested"],
@@ -727,7 +777,14 @@ class Handler(BaseHTTPRequestHandler):
                 finally:
                     REGEN["running"] = False
                     REGEN["current"] = ""
-            threading.Thread(target=work, daemon=True).start()
+                    _PIPELINE_LOCK.release()
+            try:
+                threading.Thread(target=work, daemon=True).start()
+            except RuntimeError:
+                _PIPELINE_LOCK.release()
+                REGEN["running"] = False
+                self._send(500, {"ok": False, "error": "could not start worker"})
+                return
             self._send(200, {"ok": True,
                              "detail": "Regenerate All started — artwork "
                                        "gaps refetched, pending upscales "
@@ -775,13 +832,18 @@ class Handler(BaseHTTPRequestHandler):
                                           "configure it in the Upscaling "
                                           "section first"})
                 return
+            if not _PIPELINE_LOCK.acquire(blocking=False):
+                self._send(409, {"ok": False,
+                                 "error": "a pipeline run is already in progress"})
+                return
             FETCH_ALL.update(running=True, done=0, total=0, current="",
                              cancel_requested=False, stats=None, error=None,
                              upscale=with_up)
 
             def work():
-                log = app._log_factory(cfg)
+                log = lambda m: None
                 try:
+                    log = app._log_factory(cfg)
                     stats = app.fetch_library(
                         cfg, log, with_upscale=with_up,
                         should_cancel=lambda: FETCH_ALL["cancel_requested"],
@@ -794,7 +856,14 @@ class Handler(BaseHTTPRequestHandler):
                 finally:
                     FETCH_ALL["running"] = False
                     FETCH_ALL["current"] = ""
-            threading.Thread(target=work, daemon=True).start()
+                    _PIPELINE_LOCK.release()
+            try:
+                threading.Thread(target=work, daemon=True).start()
+            except RuntimeError:
+                _PIPELINE_LOCK.release()
+                FETCH_ALL["running"] = False
+                self._send(500, {"ok": False, "error": "could not start worker"})
+                return
             self._send(200, {"ok": True,
                              "detail": "Ultimate Fetch started" +
                                       (" (with upscaling — spending Topaz "
@@ -812,78 +881,103 @@ class Handler(BaseHTTPRequestHandler):
             import re as _re
             key = str(body.get("key") or "")
             # cache keys are appids or custom_<slug> — reject anything fancier
-            # up front (safe_join would catch it too, but fail fast + cheap)
-            if not _re.fullmatch(r"[A-Za-z0-9._-]+", key):
+            # up front (safe_join would catch it too, but fail fast + cheap);
+            # dot-only keys ("..") pass the charset but must still be refused
+            if not _re.fullmatch(r"[A-Za-z0-9._-]+", key) or not key.strip("."):
                 self._send(400, {"ok": False, "error": "bad theme key"})
                 return
 
             def work():
                 import main as app
-                cfg = app.load_config()
-                log = app._log_factory(cfg)
                 try:
-                    app.reapply_from_cache(cfg, log, key)
-                except FileNotFoundError:
-                    # art is cached but the theme was never generated
-                    # (Ultimate Fetch / Regenerate All): build it now
-                    if key.isdigit():
-                        log(f"gallery: '{key}' has art but no theme yet — "
-                            "generating it from the cached art")
-                        app.check_once(cfg, log, force=True,
-                                       appid_override=int(key))
-                    else:
-                        log(f"gallery: '{key}' has no cached theme — it "
-                            "will be themed next time it is played")
-                except Exception as e:
-                    log(f"gallery apply error: {e}")
-            threading.Thread(target=work, daemon=True).start()
+                    cfg = app.load_config()
+                    log = app._log_factory(cfg)
+                    try:
+                        app.reapply_from_cache(cfg, log, key)
+                    except FileNotFoundError:
+                        # art is cached but the theme was never generated
+                        # (Ultimate Fetch / Regenerate All): build it now
+                        if key.isdigit():
+                            log(f"gallery: '{key}' has art but no theme yet — "
+                                "generating it from the cached art")
+                            app.check_once(cfg, log, force=True,
+                                           appid_override=int(key))
+                        else:
+                            log(f"gallery: '{key}' has no cached theme — it "
+                                "will be themed next time it is played")
+                    except Exception as e:
+                        log(f"gallery apply error: {e}")
+                finally:
+                    _PIPELINE_LOCK.release()
+            if not _spawn_locked(work):
+                self._send(409, {"ok": False,
+                                 "error": "a pipeline run is already in progress"})
+                return
             self._send(200, {"ok": True, "detail": f"applying '{key}'; watch the log"})
         elif path == "/api/release-hold":
             def work():
                 import main as app
-                cfg = app.load_config()
-                log = app._log_factory(cfg)
-                state = app.load_state(cfg)
-                hold = state.pop("manual_hold", None)
-                if not hold:
-                    log("release-hold: no manual theme hold was active")
-                    return
-                app.save_state(cfg, state)
-                log(f"manual theme hold released "
-                    f"('{hold.get('name') or hold.get('identity')}') — "
-                    "auto-theming resumed")
                 try:
-                    app.check_once(cfg, log)  # catch up to the last-played game
-                except Exception as e:
-                    log(f"release-hold check error: {e}")
-            threading.Thread(target=work, daemon=True).start()
+                    cfg = app.load_config()
+                    log = app._log_factory(cfg)
+                    state = app.load_state(cfg)
+                    hold = state.pop("manual_hold", None)
+                    if not hold:
+                        log("release-hold: no manual theme hold was active")
+                        return
+                    app.save_state(cfg, state)
+                    log(f"manual theme hold released "
+                        f"('{hold.get('name') or hold.get('identity')}') — "
+                        "auto-theming resumed")
+                    try:
+                        app.check_once(cfg, log)  # catch up to the last-played game
+                    except Exception as e:
+                        log(f"release-hold check error: {e}")
+                finally:
+                    _PIPELINE_LOCK.release()
+            if not _spawn_locked(work):
+                self._send(409, {"ok": False,
+                                 "error": "a pipeline run is already in progress"})
+                return
             self._send(200, {"ok": True,
                              "detail": "auto-theming resumed; catching up to "
                                        "your last-played game"})
         elif path == "/api/restore":
             def work():
                 import main as app
-                log = app._log_factory(app.load_config())
                 try:
-                    app.theme_mod.restore_windows_look(log)
-                except FileNotFoundError:
-                    log("restore: no snapshot found "
-                        "(windows_backup.json missing — nothing was ever applied?)")
-                except Exception as e:
-                    log(f"restore error: {e}")
-            threading.Thread(target=work, daemon=True).start()
+                    log = app._log_factory(app.load_config())
+                    try:
+                        app.theme_mod.restore_windows_look(log)
+                    except FileNotFoundError:
+                        log("restore: no snapshot found "
+                            "(windows_backup.json missing — nothing was ever applied?)")
+                    except Exception as e:
+                        log(f"restore error: {e}")
+                finally:
+                    _PIPELINE_LOCK.release()
+            if not _spawn_locked(work):
+                self._send(409, {"ok": False,
+                                 "error": "a pipeline run is already in progress"})
+                return
             self._send(200, {"ok": True,
                              "detail": "restoring previous Windows look; watch the log"})
         elif path == "/api/run-now":
             def work():
                 import main as app
-                cfg = app.load_config()
-                log = app._log_factory(cfg)
                 try:
-                    app.check_once(cfg, log, force=True)
-                except Exception as e:
-                    log(f"run-now error: {e}")
-            threading.Thread(target=work, daemon=True).start()
+                    cfg = app.load_config()
+                    log = app._log_factory(cfg)
+                    try:
+                        app.check_once(cfg, log, force=True)
+                    except Exception as e:
+                        log(f"run-now error: {e}")
+                finally:
+                    _PIPELINE_LOCK.release()
+            if not _spawn_locked(work):
+                self._send(409, {"ok": False,
+                                 "error": "a pipeline run is already in progress"})
+                return
             self._send(200, {"ok": True, "detail": "pipeline started; watch the log below"})
         elif path == "/api/background-pause":
             import main as app

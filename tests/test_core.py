@@ -471,6 +471,8 @@ class TestReapplyFromCacheHold(unittest.TestCase):
                       f)
         with mock.patch.object(main.theme_mod, "write_registry_colors"), \
                 mock.patch.object(main.theme_mod, "apply_theme"), \
+                mock.patch.object(main.theme_mod, "enumerate_monitors",
+                                  return_value=[]), \
                 mock.patch.object(main.extras, "apply_terminal"), \
                 mock.patch.object(main.extras, "apply_rgb"), \
                 mock.patch.object(main.time, "sleep"):
@@ -1271,6 +1273,15 @@ class TestUpscalePromptTemplate(unittest.TestCase):
             def json(self):
                 return self._payload
 
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def iter_content(self, n):
+                yield self.content
+
         def fake_post(url, **kw):
             submitted.update(kw.get("data") or {})
             return Resp(202, {"process_id": "p1"})
@@ -1673,12 +1684,16 @@ class TestComfySubmit(unittest.TestCase):
         self.submitted = None
 
     def _resp(self, status=200, payload=None, content=b""):
-        r = mock.Mock()
+        r = mock.MagicMock()
         r.status_code = status
         r.text = payload if isinstance(payload, str) else json.dumps(payload or {})
         r.json = lambda: payload if isinstance(payload, dict) else {}
         r.content = content
         r.headers = {}
+        # streaming download contract: `with requests.get(...) as r` + iter_content
+        r.__enter__.return_value = r
+        r.__exit__.return_value = False
+        r.iter_content = lambda n: iter([content])
         return r
 
     def _post(self, url, **kw):
@@ -1797,7 +1812,7 @@ class TestComfyPerRole(unittest.TestCase):
     def setUp(self):
         import io
         from PIL import Image
-        self.dir = tempfile.mkdtemp()
+        self.dir = tempfile.mkdtemp(dir=main.BASE_DIR)
         self.addCleanup(lambda: __import__("shutil").rmtree(
             self.dir, ignore_errors=True))
         os.makedirs(os.path.join(self.dir, "440"))
@@ -1825,11 +1840,14 @@ class TestComfyPerRole(unittest.TestCase):
         self.submitted = None
 
     def _resp(self, payload=None, content=b""):
-        r = mock.Mock()
+        r = mock.MagicMock()
         r.status_code = 200
         r.text = payload if isinstance(payload, str) else ""
         r.json = lambda: payload if isinstance(payload, dict) else {}
         r.content = content
+        r.__enter__.return_value = r
+        r.__exit__.return_value = False
+        r.iter_content = lambda n: iter([content])
         return r
 
     def _mock_server(self):
@@ -1953,7 +1971,7 @@ class TestComfyDefer(unittest.TestCase):
 
     def setUp(self):
         from PIL import Image
-        self.dir = tempfile.mkdtemp()
+        self.dir = tempfile.mkdtemp(dir=main.BASE_DIR)
         self.addCleanup(lambda: __import__("shutil").rmtree(
             self.dir, ignore_errors=True))
         os.makedirs(os.path.join(self.dir, "440"))

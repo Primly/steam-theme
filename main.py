@@ -41,9 +41,10 @@ __version__ = "1.12.5"
 
 
 def safe_join(base, *parts):
-    """Join parts under base; refuse anything that escapes it (path traversal)."""
-    base = os.path.abspath(base)
-    p = os.path.abspath(os.path.join(base, *parts))
+    """Join parts under base; refuse anything that escapes it (path traversal).
+    realpath (not abspath) so a symlink inside base pointing out is caught too."""
+    base = os.path.realpath(base)
+    p = os.path.realpath(os.path.join(base, *parts))
     try:
         inside = os.path.commonpath([base, p]) == base
     except ValueError:  # different drive
@@ -60,6 +61,20 @@ def cfg_path(cfg, key, default):
         return safe_join(BASE_DIR, cfg.get(key) or default)
     except ValueError:
         return os.path.join(BASE_DIR, default)
+
+
+def _exclude_set(cfg):
+    """appid ints from exclude_appids, tolerant of junk: an explicit null must
+    not crash the poll, and a string list must not silently fail open (str
+    entries never match an int appid, letting Wallpaper Engine get themed)."""
+    raw = cfg.get("exclude_appids")
+    out = set()
+    for a in raw if isinstance(raw, list) else []:
+        try:
+            out.add(int(a))
+        except (TypeError, ValueError):
+            pass
+    return out
 
 
 def load_config():
@@ -103,9 +118,24 @@ def load_state(cfg):
         return {}
 
 
+def _atomic_json_write(path, obj):
+    """tmp + os.replace so a crash or concurrent reader never sees a partial
+    file (load_state maps truncated JSON to {} and silently loses state)."""
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(obj, f, indent=2)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def save_state(cfg, state):
-    with open(_state_path(cfg), "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
+    _atomic_json_write(_state_path(cfg), state)
 
 
 def _hero_settings(cfg):
@@ -483,8 +513,8 @@ def run_pipeline(cfg, game, log, dry_run=False):
         interval_minutes=hero_set["interval_minutes"],
         shuffle=hero_set["shuffle"])
 
-    with open(os.path.join(cache, "palette.json"), "w", encoding="utf-8") as f:
-        json.dump({**pal, "wallpaper": os.path.abspath(wallpaper)}, f, indent=2)
+    _atomic_json_write(os.path.join(cache, "palette.json"),
+                       {**pal, "wallpaper": os.path.abspath(wallpaper)})
 
     if dry_run:
         log("  [dry-run] skipping registry writes, theme apply, and extras")
@@ -753,7 +783,7 @@ def fetch_library(cfg, log=print, should_cancel=lambda: False,
         raise ValueError("no Steam API key configured")
     steam_id = cfg.get("steam_id64") or steamdetect.get_steam_id64()
     games = steamdetect.get_owned_games(cfg["steam_api_key"], steam_id)
-    excludes = set(cfg.get("exclude_appids", []) or [])
+    excludes = _exclude_set(cfg)
     root = cfg_path(cfg, "cache_dir", "cache")
     hero_count = artwork.hero_count_for(cfg)
     stats = {"total": len(games), "fetched": 0, "skipped": 0, "excluded": 0,
@@ -847,7 +877,7 @@ def regenerate_cache(cfg, log=print, should_cancel=lambda: False,
                          if os.path.isdir(os.path.join(root, e)))
     except OSError:
         entries = []
-    excludes = set(cfg.get("exclude_appids", []) or [])
+    excludes = _exclude_set(cfg)
     hero_count = artwork.hero_count_for(cfg)
     up_cfg = cfg.get("upscaling", {}) or {}
     up = bool(up_cfg.get("enabled")) and up_cfg.get("provider") == "comfy"
@@ -886,7 +916,10 @@ def regenerate_cache(cfg, log=print, should_cancel=lambda: False,
         if key.isdigit() and int(key) in excludes:
             stats["skipped"] += 1
             continue
-        cache = os.path.join(root, key)
+        try:
+            cache = safe_join(root, key)
+        except ValueError:
+            continue
         pal = {}
         try:
             with open(os.path.join(cache, "palette.json"),
@@ -946,9 +979,7 @@ def regenerate_cache(cfg, log=print, should_cancel=lambda: False,
                         + (f" (mood '{pal['mood']}')"
                            if pal.get("mood") else ""))
                     try:
-                        with open(os.path.join(cache, "palette.json"),
-                                  "w", encoding="utf-8") as f:
-                            json.dump(pal, f, indent=2)
+                        _atomic_json_write(os.path.join(cache, "palette.json"), pal)
                     except OSError:
                         pass
             except Exception as e:
@@ -1006,7 +1037,7 @@ def check_once(cfg, log, force=False, appid_override=None, dry_run=False,
     cache_key_override targets an explicit cached theme (the one the user is
     editing in the UI) and skips detection entirely."""
     steam_id = cfg.get("steam_id64") or steamdetect.get_steam_id64()
-    excludes = set(cfg.get("exclude_appids", []))
+    excludes = _exclude_set(cfg)
     state = load_state(cfg)
 
     if cache_key_override:
@@ -1018,8 +1049,8 @@ def check_once(cfg, log, force=False, appid_override=None, dry_run=False,
         appid_t = int(target) if target.isdigit() else None
         name_t = target
         try:
-            with open(os.path.join(cfg_path(cfg, "cache_dir", "cache"),
-                                   target, "palette.json"),
+            with open(safe_join(cfg_path(cfg, "cache_dir", "cache"),
+                                target, "palette.json"),
                       encoding="utf-8") as f:
                 name_t = json.load(f).get("game_name") or name_t
         except (OSError, ValueError):

@@ -1,6 +1,7 @@
 # secrets + local state
 config.json
 state.json
+*.tmp
 service.log
 windows_backup.json
 desktop_backup.json

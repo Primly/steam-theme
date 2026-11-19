@@ -12,6 +12,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import livewall  # noqa: E402
+import main  # noqa: E402
 
 
 def _mp4_bytes():
@@ -30,7 +31,7 @@ def fake_get(url, **kw):
 class MultiHeroFixture(unittest.TestCase):
     def setUp(self):
         from PIL import Image
-        self.dir = tempfile.mkdtemp()
+        self.dir = tempfile.mkdtemp(dir=main.BASE_DIR)
         self.addCleanup(lambda: __import__("shutil").rmtree(
             self.dir, ignore_errors=True))
         self.heroes = []
