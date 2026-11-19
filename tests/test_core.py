@@ -30,7 +30,9 @@ else:
 
 class TestPathSandbox(unittest.TestCase):
     def test_safe_join_accepts_children(self):
-        base = tempfile.mkdtemp()
+        # realpath the base too: on Windows mkdtemp() yields an 8.3 short path
+        # (RUNNER~1) that safe_join's realpath expands to the long form
+        base = os.path.realpath(tempfile.mkdtemp())
         self.assertTrue(main.safe_join(base, "a", "b.txt").startswith(base))
 
     def test_safe_join_rejects_traversal(self):
