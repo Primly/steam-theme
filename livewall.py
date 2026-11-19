@@ -54,6 +54,12 @@ _FRONTEND_ONLY_WIDGETS = {"upload", "control_after_generate",
 _VIDEO_SAVERS = {"SaveVideo", "VHS_VideoCombine", "SaveAnimatedWEBP",
                  "SaveAnimatedPNG", "SaveAnimatedGIF"}
 _VIDEO_EXTS = (".mp4", ".webm", ".mkv", ".mov", ".gif")
+MAX_VIDEO_DOWNLOAD = 512 * 1024 * 1024  # hard cap on fetched video bytes
+
+
+def _cache_root(cfg):
+    import main as app
+    return app.cfg_path(cfg, "cache_dir", "cache")
 _HOST_RE = __import__("re").compile(r"^[A-Za-z0-9.\-]+$")
 _queue_lock = threading.Lock()
 _draining = False  # a background drain worker is running
@@ -715,8 +721,7 @@ def workflow_meta(configured_text, api, base):
 # ---------------------------------------------------------------- queue
 
 def _queue_file(cfg):
-    cache_root = cfg.get("cache_dir") or "cache"
-    return os.path.join(cache_root, "video_queue.json")
+    return os.path.join(_cache_root(cfg), "video_queue.json")
 
 
 def _game_running(cfg):
@@ -1088,19 +1093,24 @@ def generate(cfg, hero_path, dst, context, log=print, defer=True):
             log("  [livewall] finished but produced no video file")
             return None
         fn, sub, typ = found[-1]
-        dl = requests.get(base + "/view", timeout=600,
+        with requests.get(base + "/view", timeout=600, stream=True,
                           params={"filename": fn, "subfolder": sub,
-                                  "type": typ})
-        if dl.status_code != 200 or len(dl.content) < 1024:
-            log(f"  [livewall] video download failed: HTTP {dl.status_code}")
+                                  "type": typ}) as dl:
+            if dl.status_code != 200:
+                log(f"  [livewall] video download failed: HTTP {dl.status_code}")
+                return None
+            data = upscale._capped_content(dl, MAX_VIDEO_DOWNLOAD, log,
+                                           "video download")
+        if data is None or len(data) < 1024:
+            log("  [livewall] video download failed (empty or over cap)")
             return None
-        if b"ftyp" not in dl.content[:16] and not fn.lower().endswith(".gif"):
+        if b"ftyp" not in data[:16] and not fn.lower().endswith(".gif"):
             log("  [livewall] download was not a video file")
             return None
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         with open(dst, "wb") as f:
-            f.write(dl.content)
-        log(f"  [livewall] video ready ({len(dl.content) // 1024} KB) -> {dst}")
+            f.write(data)
+        log(f"  [livewall] video ready ({len(data) // 1024} KB) -> {dst}")
         return dst
     except requests.RequestException as e:
         log(f"  [livewall] ComfyUI unreachable: {e}")
@@ -1144,8 +1154,7 @@ def install(cfg, video_path, cache_key, theme_title, hero_path, log=print):
 
 def _game_name(cfg, cache_key):
     """Best-effort game name for the WE title."""
-    pal = os.path.join(cfg.get("cache_dir") or "cache",
-                       str(cache_key), "palette.json")
+    pal = os.path.join(_cache_root(cfg), str(cache_key), "palette.json")
     try:
         with open(pal, encoding="utf-8") as f:
             return json.load(f).get("game_name") or str(cache_key)
@@ -1321,8 +1330,7 @@ def reapply_cached(cfg, cache_key, pal, hero_device, log=print):
     lw = cfg.get("livewall", {})
     if not (lw.get("enabled") and lw.get("provider") == "comfy"):
         return
-    root = os.path.join(cfg.get("cache_dir") or "cache",
-                        str(cache_key), "livewall")
+    root = os.path.join(_cache_root(cfg), str(cache_key), "livewall")
     if os.path.isdir(root):
         projs = glob.glob(os.path.join(root, "*", "project.json"))
         if projs:
@@ -1332,8 +1340,7 @@ def reapply_cached(cfg, cache_key, pal, hero_device, log=print):
     hero = None
     art = None
     try:
-        art = artwork_from_cache(os.path.join(
-            cfg.get("cache_dir") or "cache", str(cache_key)))
+        art = artwork_from_cache(os.path.join(_cache_root(cfg), str(cache_key)))
         hero = (art or {}).get("hero")
     except Exception:
         pass
@@ -1351,8 +1358,7 @@ def reapply_cached(cfg, cache_key, pal, hero_device, log=print):
     try:  # per-image prompts, same as a normal theme run
         import main as app
         ctx_for, _flush = app._per_image_contexts(
-            cfg, os.path.join(cfg.get("cache_dir") or "cache",
-                              str(cache_key)),
+            cfg, os.path.join(_cache_root(cfg), str(cache_key)),
             game,
             {"appearance": ctx["appearance"],
              "mode": (pal or {}).get("mode")
@@ -1394,8 +1400,7 @@ def _hero_target(cfg, hero, cache_key):
     """(hash10, project_dir, video_path) for a hero's looping video."""
     with open(hero, "rb") as f:
         h = hashlib.sha1(f.read()).hexdigest()[:10]
-    d = os.path.join(cfg.get("cache_dir") or "cache", str(cache_key),
-                     "livewall", h)
+    d = os.path.join(_cache_root(cfg), str(cache_key), "livewall", h)
     return h, d, os.path.join(d, "wallpaper.mp4")
 
 

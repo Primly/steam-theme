@@ -13,17 +13,35 @@ Results are cached next to the source as <role>_upscaled_<model>.png.
 
 import glob
 import hashlib
+import io
 import json
 import os
 import re
 import threading
 import time
 import uuid
+from urllib.parse import urlparse
 
 import requests
 from PIL import Image
 
 TOPAZ_BASE = "https://api.topazlabs.com/image/v1"
+MAX_IMAGE_DOWNLOAD = 128 * 1024 * 1024  # hard cap on fetched image bytes
+
+
+def _capped_content(r, cap, log, label):
+    """Read a streamed response under a hard byte cap; None on exceed/error."""
+    buf = io.BytesIO()
+    try:
+        for chunk in r.iter_content(65536):
+            if buf.tell() + len(chunk) > cap:
+                log(f"  [up] {label}: download exceeds {cap // 1048576}MB cap")
+                return None
+            buf.write(chunk)
+    except requests.RequestException as e:
+        log(f"  [up] {label}: download failed: {e}")
+        return None
+    return buf.getvalue()
 
 # models served by the /enhance-gen/async (creative/generative) endpoint;
 # anything else goes to the precision /enhance/async endpoint
@@ -170,27 +188,49 @@ def _topaz(src, dst, cfg, log, target_w, target_h, context=None, role=None,
         status = st.json().get("status", "")
         log(f"  [up] topaz status: {status}")
         if status == "Completed":
-            dl = requests.get(f"{TOPAZ_BASE}/download/{pid}", headers=headers,
-                              timeout=60)
-            if dl.status_code == 200 and "json" in dl.headers.get("Content-Type", ""):
-                # endpoint returns JSON with a signed R2 URL, not image bytes
-                url = dl.json().get("download_url") or dl.json().get("head_url")
-                if not url:
-                    log(f"  [up] topaz download: no URL in {dl.text[:200]}")
+            data = None
+            url = None
+            with requests.get(f"{TOPAZ_BASE}/download/{pid}", headers=headers,
+                              timeout=60, stream=True) as dl:
+                if dl.status_code != 200:
+                    log(f"  [up] topaz download failed: HTTP {dl.status_code}")
                     return None
-                dl = requests.get(url, timeout=300)
-            if dl.status_code == 200:
-                import io
-                try:
-                    Image.open(io.BytesIO(dl.content)).verify()
-                except Exception:
-                    log(f"  [up] topaz download: not an image ({dl.text[:150] if len(dl.content) < 2000 else 'bad bytes'})")
-                    return None
-                with open(dst, "wb") as f:
-                    f.write(dl.content)
-                return dst
-            log(f"  [up] topaz download failed: HTTP {dl.status_code}")
-            return None
+                if "json" in dl.headers.get("Content-Type", ""):
+                    # endpoint returns JSON with a signed R2 URL, not bytes
+                    raw = _capped_content(dl, 1024 * 1024, log, "topaz metadata")
+                    if raw is None:
+                        return None
+                    meta = json.loads(raw)
+                    url = meta.get("download_url") or meta.get("head_url")
+                    if not url:
+                        log(f"  [up] topaz download: no URL in {str(meta)[:200]}")
+                        return None
+                    if urlparse(url).scheme != "https":
+                        log("  [up] topaz download: refusing non-https URL")
+                        return None
+                else:
+                    data = _capped_content(dl, MAX_IMAGE_DOWNLOAD, log,
+                                           "topaz download")
+                    if data is None:
+                        return None
+            if data is None and url:
+                # JSON branch: fetch the signed URL (https validated above)
+                with requests.get(url, timeout=300, stream=True) as dl2:
+                    if dl2.status_code != 200:
+                        log(f"  [up] topaz download failed: HTTP {dl2.status_code}")
+                        return None
+                    data = _capped_content(dl2, MAX_IMAGE_DOWNLOAD, log,
+                                           "topaz download")
+            if data is None:
+                return None
+            try:
+                Image.open(io.BytesIO(data)).verify()
+            except Exception:
+                log("  [up] topaz download: not an image")
+                return None
+            with open(dst, "wb") as f:
+                f.write(data)
+            return dst
         if status in ("Failed", "Cancelled"):
             log(f"  [up] topaz job {status.lower()}")
             return None
@@ -210,19 +250,28 @@ def _ai(src, dst, cfg, log, timeout_s=300):
     model = ai.get("upscale_model") or ai.get("model") or ""
     try:
         with open(src, "rb") as img_f:
-            r = requests.post(
-                base + "/images/edits", headers=headers, timeout=timeout_s,
-                data={"model": model, "response_format": "b64_json",
-                      "prompt": "Upscale this game key art to higher "
-                                "resolution, faithful, no content changes."},
-                files={"image": img_f})
-        if r.status_code != 200:
-            log(f"  [up] ai images API failed: HTTP {r.status_code} {r.text[:200]}")
+            with requests.post(
+                    base + "/images/edits", headers=headers, timeout=timeout_s,
+                    data={"model": model, "response_format": "b64_json",
+                          "prompt": "Upscale this game key art to higher "
+                                  "resolution, faithful, no content changes."},
+                    files={"image": img_f}, stream=True) as r:
+                if r.status_code != 200:
+                    log(f"  [up] ai images API failed: HTTP {r.status_code}")
+                    return None
+                raw = _capped_content(r, MAX_IMAGE_DOWNLOAD * 2, log,
+                                      "ai images API")
+        if raw is None:
             return None
         import base64
-        b64 = r.json()["data"][0]["b64_json"]
+        b64 = json.loads(raw)["data"][0]["b64_json"]
+        data = base64.b64decode(b64)
+        if len(data) > MAX_IMAGE_DOWNLOAD:
+            log(f"  [up] ai images API: result exceeds "
+                f"{MAX_IMAGE_DOWNLOAD // 1048576}MB cap")
+            return None
         with open(dst, "wb") as f:
-            f.write(base64.b64decode(b64))
+            f.write(data)
         return dst
     except Exception as e:
         log(f"  [up] ai upscale error: {e}")
@@ -590,10 +639,10 @@ def _game_running(cfg):
     games: Steam's now-playing registry reports them while they run, and
     counting them would defer every upscale/video job forever."""
     try:
+        import main as app
         import steamdetect
         appid = steamdetect.get_running_appid()
-        excludes = cfg.get("exclude_appids") or []
-        if appid and appid not in excludes:
+        if appid and appid not in app._exclude_set(cfg):
             return True
         return bool(steamdetect.find_running_custom_game(
             cfg.get("custom_games")))
@@ -602,7 +651,9 @@ def _game_running(cfg):
 
 
 def _queue_file(cfg):
-    return os.path.join(cfg.get("cache_dir") or "cache", "comfy_queue.json")
+    import main as app
+    return os.path.join(app.cfg_path(cfg, "cache_dir", "cache"),
+                        "comfy_queue.json")
 
 
 def enqueue_comfy(cfg, job):
@@ -823,21 +874,23 @@ def _comfy(src, dst, cfg, log, target_w, target_h, context=None,
             log("  [up] comfy finished but produced no image")
             return None
         im = images[-1]  # the SaveImage output
-        dl = requests.get(base + "/view", timeout=300,
+        with requests.get(base + "/view", timeout=300, stream=True,
                           params={"filename": im["filename"],
                                   "subfolder": im.get("subfolder", ""),
-                                  "type": im.get("type", "output")})
-        if dl.status_code != 200:
-            log(f"  [up] comfy download failed: HTTP {dl.status_code}")
+                                  "type": im.get("type", "output")}) as dl:
+            if dl.status_code != 200:
+                log(f"  [up] comfy download failed: HTTP {dl.status_code}")
+                return None
+            data = _capped_content(dl, MAX_IMAGE_DOWNLOAD, log, "comfy download")
+        if data is None:
             return None
-        import io
         try:
-            Image.open(io.BytesIO(dl.content)).verify()
+            Image.open(io.BytesIO(data)).verify()
         except Exception:
             log("  [up] comfy download: not an image")
             return None
         with open(dst, "wb") as f:
-            f.write(dl.content)
+            f.write(data)
         return dst
     except requests.RequestException as e:
         log(f"  [up] comfy unreachable: {e}")
@@ -875,7 +928,11 @@ def maybe_upscale(path, target_w, target_h, cfg, log=print, context=None,
     log(f"  [up] {os.path.basename(path)} is {w}x{h}, target {target_w}x{target_h}, "
         f"model '{model}' — upscaling")
     if prov == "topaz":
-        out = _topaz(path, dst, cfg, log, target_w, target_h, context, role)
+        try:
+            out = _topaz(path, dst, cfg, log, target_w, target_h, context, role)
+        except (requests.RequestException, ValueError) as e:
+            log(f"  [up] topaz error: {e}")
+            out = None
     elif prov == "comfy":
         out = _comfy(path, dst, cfg, log, target_w, target_h, context,
                      role=role)

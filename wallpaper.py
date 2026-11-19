@@ -23,11 +23,18 @@ def assign_roles(monitors, mapping, log=print):
                      * (m["rect"][3] - m["rect"][1]), reverse=True)
     for i, m in enumerate(by_area):
         m["role"] = defaults[i] if i < len(defaults) else "hero"
-    for entry in mapping:
-        needle = entry["match"].lower()
+    # role becomes a path component (slides/<role>/) — only the three known
+    # roles are ever valid; a hostile config value must not escape the cache
+    for entry in mapping if isinstance(mapping, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        needle, role = entry.get("match"), entry.get("role")
+        if not isinstance(needle, str) or role not in ("hero", "logo", "icon"):
+            continue
+        needle = needle.lower()
         for m in monitors:
             if needle in m["desc"].lower() or needle in m["device"].lower():
-                m["role"] = entry["role"]
+                m["role"] = role
     for m in monitors:
         log(f"  [mon] {m['device']} {m['desc']!r} "
             f"{m['rect'][2]-m['rect'][0]}x{m['rect'][3]-m['rect'][1]} -> {m['role']}")

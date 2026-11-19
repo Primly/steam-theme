@@ -73,12 +73,42 @@ def _normalize_image(path, log=print):
         return path
 
 
+MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024  # hard cap: a hostile/compromised art
+                                       # source must not be able to exhaust memory
+
+
 def _download(url, dest, log=print):
-    r = requests.get(url, headers=UA, timeout=30)
-    if r.status_code != 200 or len(r.content) < 5000:
+    """Stream to disk under a hard byte cap; https only (every art source is
+    an https CDN — a redirect downgrade to http would be a hostile hop).
+    Network errors are contained here so one bad URL can't abort the run."""
+    total = 0
+    try:
+        with requests.get(url, headers=UA, timeout=30, stream=True) as r:
+            if r.status_code != 200:
+                return None
+            if urllib.parse.urlparse(r.url).scheme != "https":
+                log(f"  [art] refusing non-https download: {r.url}")
+                return None
+            with open(dest, "wb") as f:
+                for chunk in r.iter_content(65536):
+                    total += len(chunk)
+                    if total > MAX_DOWNLOAD_BYTES:
+                        raise ValueError(
+                            f"download exceeds {MAX_DOWNLOAD_BYTES // 1048576}MB cap")
+                    f.write(chunk)
+    except (requests.RequestException, ValueError, OSError) as e:
+        log(f"  [art] download failed ({url}): {e}")
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
         return None
-    with open(dest, "wb") as f:
-        f.write(r.content)
+    if total < 5000:
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        return None
     try:
         with Image.open(dest) as im:
             im.verify()
@@ -264,7 +294,8 @@ def fetch_artwork(appid, name, icon_url, cfg, log=print, cache_key=None):
     that fails is simply absent; callers fall back to hero. appid may be None
     for non-Steam custom games (SGDB name search + wallhaven only).
     """
-    cache = os.path.join(cfg["cache_dir"], cache_key or str(appid))
+    import main as app
+    cache = app.safe_join(cfg["cache_dir"], cache_key or str(appid))
     os.makedirs(cache, exist_ok=True)
     sgdb_key = cfg.get("steamgriddb_api_key") or ""
     hero_count = hero_count_for(cfg)

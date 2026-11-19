@@ -23,6 +23,11 @@ if [[ -z "$PYTHON" ]]; then
   exit 1
 fi
 
+# systemd expands % specifiers in unit settings — escape literal percents,
+# and quote the paths so an install dir with spaces yields a valid unit
+APP_DIR_SYS="${APP_DIR//%/%%}"
+PYTHON_SYS="${PYTHON//%/%%}"
+
 remove() {
   systemctl --user disable --now steam-theme.service steam-theme-ui.service 2>/dev/null || true
   rm -f "$UNIT_DIR/steam-theme.service" "$UNIT_DIR/steam-theme-ui.service"
@@ -44,8 +49,8 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-WorkingDirectory=$APP_DIR
-ExecStart=$PYTHON $APP_DIR/main.py
+WorkingDirectory="$APP_DIR_SYS"
+ExecStart="$PYTHON_SYS" "$APP_DIR_SYS/main.py"
 Restart=on-failure
 RestartSec=10
 Environment=PYTHONUNBUFFERED=1
@@ -61,8 +66,8 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-WorkingDirectory=$APP_DIR
-ExecStart=$PYTHON $APP_DIR/main.py --ui
+WorkingDirectory="$APP_DIR_SYS"
+ExecStart="$PYTHON_SYS" "$APP_DIR_SYS/main.py" --ui
 Restart=on-failure
 RestartSec=10
 Environment=PYTHONUNBUFFERED=1
